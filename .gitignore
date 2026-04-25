@@ -26,3 +26,8 @@ htmlcov/
 .env.*
 !.env.example
 settings.json
+
+# Local exploration artifacts
+.playwright-mcp/
+scripts/smoke_*.py
+scripts/probe_*.py

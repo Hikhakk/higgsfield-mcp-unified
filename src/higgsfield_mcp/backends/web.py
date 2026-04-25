@@ -1,9 +1,21 @@
-"""Web backend driver: ``cloud.higgsfield.ai``.
+"""Web backend driver: ``fnf.higgsfield.ai``.
 
 This backend is opt-in and inherently fragile. It posts to undocumented
-endpoints with a Clerk JWT in the ``Authorization`` header. The shapes below
-mirror what ``jfikrat/higgsfield-mcp`` sends today and may need updates as
-the cloud frontend evolves.
+endpoints with a Clerk JWT in the ``Authorization`` header. The shapes mirror
+``jfikrat/higgsfield-mcp`` and may need updates as the cloud frontend evolves.
+
+Implementation notes:
+
+* Uses ``curl_cffi`` with Chrome TLS impersonation. ``fnf.higgsfield.ai`` is
+  protected by Datadome which fingerprints Python's TLS stack and blocks it
+  with a 403 captcha challenge; ``curl_cffi`` carries Chrome's exact JA3/JA4
+  signature and slips through.
+* Submit body is ``{"params": {...}, "use_unlim": false, "use_free_gens": false}``
+  for V2 models, ``{"params": {...}, "use_unlim": ...}`` for V1.
+* Submit response shape: ``{"job_sets": [{"jobs": [{"id": "..."}]}]}``.
+* Status is fetched via ``GET /jobs?size=100`` and the caller filters by id.
+* ``HIGGSFIELD_DATADOME_COOKIE`` is optional but improves first-request hit
+  rate (the cookie is normally set automatically once we make any request).
 """
 
 from __future__ import annotations
@@ -11,7 +23,7 @@ from __future__ import annotations
 import os
 from typing import Any
 
-import httpx
+from curl_cffi.requests import AsyncSession
 
 from higgsfield_mcp.auth.clerk import JWTAuth, load_jwt
 from higgsfield_mcp.models import Backend as BackendName
@@ -19,13 +31,28 @@ from higgsfield_mcp.models import ModelSpec
 
 from .base import BackendDriver, BackendError, JobHandle, JobState, JobStatus
 
-BASE_URL = "https://cloud.higgsfield.ai"
+BASE_URL = "https://fnf.higgsfield.ai"
 ENABLE_FLAG = "HIGGSFIELD_ENABLE_WEB_BACKEND"
+
+V2_MODELS: frozenset[str] = frozenset(
+    {
+        "nano-banana-2",
+        "soul-v2",
+        "kling3",
+        "kling-o3-flf",
+        "grok",
+        "wan2-6",
+        "seedance1-5",
+        "seedance2",
+        "seedance2-fast",
+    }
+)
 
 _STATE_MAP: dict[str, JobState] = {
     "queued": "queued",
     "pending": "queued",
     "in_progress": "in_progress",
+    "in_progress_v2": "in_progress",
     "running": "in_progress",
     "processing": "in_progress",
     "completed": "completed",
@@ -40,16 +67,51 @@ _STATE_MAP: dict[str, JobState] = {
 
 
 class WebBackendDisabledError(BackendError):
-    """Raised when the web backend is requested without the opt-in env flag."""
+    pass
 
 
 def assert_enabled() -> None:
     if os.getenv(ENABLE_FLAG) not in ("1", "true", "True", "yes"):
         raise WebBackendDisabledError(
-            f"The cloud.higgsfield.ai web backend is opt-in. "
-            f"Set {ENABLE_FLAG}=1 if you understand the risks (web auth may break, "
-            f"may not be covered by Higgsfield's terms of use)."
+            "The web backend is opt-in. Set HIGGSFIELD_ENABLE_WEB_BACKEND=1 if you "
+            "understand the risks (auth may break, may not be covered by ToS)."
         )
+
+
+def _build_body(model: ModelSpec, params: dict[str, Any]) -> dict[str, Any]:
+    if model.id in V2_MODELS:
+        return {"params": params, "use_unlim": False, "use_free_gens": False}
+    return {"params": params, "use_unlim": model.id == "kling2-5-turbo"}
+
+
+def _extract_job_id(body: dict[str, Any]) -> str | None:
+    job_sets = body.get("job_sets")
+    if isinstance(job_sets, list) and job_sets:
+        first = job_sets[0]
+        if isinstance(first, dict):
+            jobs = first.get("jobs")
+            if isinstance(jobs, list) and jobs:
+                first_job = jobs[0]
+                if isinstance(first_job, dict):
+                    job_id = first_job.get("id")
+                    if isinstance(job_id, str):
+                        return job_id
+    for key in ("job_id", "id", "request_id"):
+        v = body.get(key)
+        if isinstance(v, str):
+            return v
+    return None
+
+
+_BROWSER_HEADERS = {
+    "Accept": "application/json",
+    "Content-Type": "application/json",
+    "Origin": "https://cloud.higgsfield.ai",
+    "Referer": "https://cloud.higgsfield.ai/",
+    "sec-ch-ua": '"Chromium";v="120", "Google Chrome";v="120", "Not?A_Brand";v="24"',
+    "sec-ch-ua-mobile": "?0",
+    "sec-ch-ua-platform": '"macOS"',
+}
 
 
 class WebBackend(BackendDriver):
@@ -59,64 +121,87 @@ class WebBackend(BackendDriver):
         assert_enabled()
         self._auth = auth
         self._base_url = base_url
-        self._client: httpx.AsyncClient | None = None
+        self._session: AsyncSession | None = None  # type: ignore[type-arg]
+        self._datadome = os.getenv("HIGGSFIELD_DATADOME_COOKIE")
 
-    async def _ensure_client(self) -> httpx.AsyncClient:
-        if self._client is not None:
-            return self._client
-        if self._auth is None:
+    async def _ensure_session(self) -> AsyncSession:  # type: ignore[type-arg]
+        if self._session is None:
+            self._session = AsyncSession(impersonate="chrome120", timeout=60)
+        return self._session
+
+    async def _auth_header(self) -> dict[str, str]:
+        if self._auth is None or self._auth.is_expired():
             self._auth = await load_jwt()
-        self._client = httpx.AsyncClient(
-            base_url=self._base_url,
-            headers={
-                "Authorization": self._auth.header,
-                "Accept": "application/json",
-                "Content-Type": "application/json",
-            },
-            timeout=httpx.Timeout(30.0, connect=10.0),
-        )
-        return self._client
+        return {"Authorization": self._auth.header}
 
     async def aclose(self) -> None:
-        if self._client is not None:
-            await self._client.aclose()
-            self._client = None
+        if self._session is not None:
+            await self._session.close()
+            self._session = None
+
+    def _cookies(self) -> dict[str, str] | None:
+        return {"datadome": self._datadome} if self._datadome else None
 
     async def submit(self, model: ModelSpec, params: dict[str, Any]) -> JobHandle:
         if model.backend != "web":
             raise BackendError(f"WebBackend cannot submit official model {model.id!r}")
-        client = await self._ensure_client()
-        payload = {"model_id": model.id, **params}
-        resp = await client.post(model.endpoint, json=payload)
-        body = self._json_or_raise(resp)
-        request_id = body.get("job_id") or body.get("id") or body.get("request_id")
-        if not request_id:
+        session = await self._ensure_session()
+        headers = {**_BROWSER_HEADERS, **(await self._auth_header())}
+        body = _build_body(model, params)
+        resp = await session.post(
+            f"{self._base_url}{model.endpoint}",
+            json=body,
+            headers=headers,
+            cookies=self._cookies(),
+        )
+        data = self._json_or_raise(resp)
+        job_id = _extract_job_id(data)
+        if not job_id:
             raise BackendError(
-                f"Submit response missing job_id: {body!r}",
+                f"Submit response missing job_id: {data!r}",
                 status_code=resp.status_code,
             )
-        return JobHandle(backend="web", request_id=str(request_id))
+        return JobHandle(backend="web", request_id=job_id)
 
     async def status(self, handle: JobHandle) -> JobStatus:
-        client = await self._ensure_client()
-        resp = await client.get(f"/jobs/{handle.request_id}")
-        body = self._json_or_raise(resp)
-        raw_state = str(body.get("status") or body.get("state") or "").lower()
+        session = await self._ensure_session()
+        headers = {**_BROWSER_HEADERS, **(await self._auth_header())}
+        resp = await session.get(
+            f"{self._base_url}/jobs",
+            params={"size": 100},
+            headers=headers,
+            cookies=self._cookies(),
+        )
+        data = self._json_or_raise(resp)
+        jobs = data.get("jobs") if isinstance(data, dict) else None
+        job: dict[str, Any] | None = None
+        if isinstance(jobs, list):
+            for entry in jobs:
+                if isinstance(entry, dict) and entry.get("id") == handle.request_id:
+                    job = entry
+                    break
+        if job is None:
+            return JobStatus(state="in_progress", raw={"missing": True})
+
+        raw_state = str(job.get("status") or job.get("state") or "").lower()
         state = _STATE_MAP.get(raw_state, "in_progress")
-        images = tuple(self._extract_image_urls(body))
-        video_url = self._extract_video_url(body)
         return JobStatus(
             state=state,
-            progress=body.get("progress"),
-            images=images,
-            video_url=video_url,
-            error=body.get("error") or body.get("error_message"),
-            raw=body,
+            progress=job.get("progress"),
+            images=tuple(self._extract_image_urls(job)),
+            video_url=self._extract_video_url(job),
+            error=job.get("error") or job.get("error_message"),
+            raw=job,
         )
 
     async def cancel(self, handle: JobHandle) -> None:
-        client = await self._ensure_client()
-        resp = await client.post(f"/jobs/{handle.request_id}/cancel")
+        session = await self._ensure_session()
+        headers = {**_BROWSER_HEADERS, **(await self._auth_header())}
+        resp = await session.post(
+            f"{self._base_url}/jobs/{handle.request_id}/cancel",
+            headers=headers,
+            cookies=self._cookies(),
+        )
         if resp.status_code >= 400:
             raise BackendError(
                 f"Cancel failed: {resp.status_code}",
@@ -125,56 +210,85 @@ class WebBackend(BackendDriver):
             )
 
     async def upload(self, data: bytes, mime: str) -> str:
-        client = await self._ensure_client()
-        files = {"file": ("upload.bin", data, mime)}
-        # The web app uses a presigned-upload flow at /uploads; this is the
-        # documented path used by jfikrat's TS port. If Higgsfield rotates the
-        # path, this is the first thing that will need updating.
-        resp = await client.post("/uploads", files=files, headers={"Content-Type": ""})
-        body = self._json_or_raise(resp)
-        url = body.get("url") or body.get("public_url")
-        if not url:
-            raise BackendError(f"Upload response missing url: {body!r}")
-        return str(url)
+        session = await self._ensure_session()
+        headers = {**_BROWSER_HEADERS, **(await self._auth_header())}
+        create = await session.post(
+            f"{self._base_url}/media/batch",
+            json={"mimetypes": [mime], "source": "user_upload"},
+            headers=headers,
+            cookies=self._cookies(),
+        )
+        batch = self._json_or_raise(create)
+        items = batch.get("items") or batch.get("media") or []
+        if not items or not isinstance(items, list):
+            raise BackendError(f"Unexpected /media/batch response: {batch!r}")
+        item = items[0]
+        upload_url = item.get("upload_url")
+        media_id = item.get("id")
+        public_url = item.get("url") or item.get("public_url")
+        if not upload_url or not media_id:
+            raise BackendError(f"/media/batch missing upload_url or id: {item!r}")
+        async with AsyncSession(impersonate="chrome120", timeout=120) as raw:
+            put = await raw.put(upload_url, data=data, headers={"Content-Type": mime})
+            if put.status_code >= 400:
+                raise BackendError(f"S3 upload failed: HTTP {put.status_code}")
+        await session.post(
+            f"{self._base_url}/media/{media_id}/upload",
+            json={},
+            headers=headers,
+            cookies=self._cookies(),
+        )
+        return str(public_url) if public_url else ""
 
     @staticmethod
-    def _extract_image_urls(body: dict[str, Any]) -> list[str]:
+    def _extract_image_urls(job: dict[str, Any]) -> list[str]:
         urls: list[str] = []
-        for key in ("images", "outputs", "results"):
-            entries = body.get(key)
+        for key in ("results", "images", "outputs"):
+            entries = job.get(key)
             if not isinstance(entries, list):
                 continue
             for entry in entries:
-                if isinstance(entry, str):
+                if isinstance(entry, str) and not entry.endswith((".mp4", ".webm", ".mov")):
                     urls.append(entry)
                 elif isinstance(entry, dict):
-                    url = entry.get("url") or entry.get("image_url") or entry.get("public_url")
+                    url = (
+                        entry.get("url")
+                        or entry.get("image_url")
+                        or entry.get("public_url")
+                        or entry.get("preview_url")
+                    )
                     if url and not str(url).endswith((".mp4", ".webm", ".mov")):
                         urls.append(str(url))
         return urls
 
     @staticmethod
-    def _extract_video_url(body: dict[str, Any]) -> str | None:
-        video = body.get("video")
+    def _extract_video_url(job: dict[str, Any]) -> str | None:
+        video = job.get("video")
         if isinstance(video, str):
             return video
         if isinstance(video, dict):
-            return str(video.get("url") or video.get("public_url") or "") or None
-        # Some endpoints return a flat URL under "outputs"
-        outputs = body.get("outputs")
-        if isinstance(outputs, list):
-            for entry in outputs:
+            url = video.get("url") or video.get("public_url")
+            if url:
+                return str(url)
+        for key in ("results", "outputs", "media"):
+            entries = job.get(key)
+            if not isinstance(entries, list):
+                continue
+            for entry in entries:
+                url = None
                 if isinstance(entry, dict):
                     url = entry.get("url") or entry.get("public_url")
-                    if url and str(url).endswith((".mp4", ".webm", ".mov")):
-                        return str(url)
+                elif isinstance(entry, str):
+                    url = entry
+                if url and str(url).endswith((".mp4", ".webm", ".mov")):
+                    return str(url)
         return None
 
     @staticmethod
-    def _json_or_raise(resp: httpx.Response) -> dict[str, Any]:
+    def _json_or_raise(resp: Any) -> dict[str, Any]:
         if resp.status_code >= 400:
             raise BackendError(
-                f"HTTP {resp.status_code}: {resp.text[:300]}",
+                f"HTTP {resp.status_code}: {resp.text[:500]}",
                 status_code=resp.status_code,
                 body=resp.text,
             )

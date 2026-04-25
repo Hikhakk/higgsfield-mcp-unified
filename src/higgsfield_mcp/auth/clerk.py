@@ -1,42 +1,53 @@
-"""Clerk-JWT loader for the opt-in web backend (``cloud.higgsfield.ai``).
+"""Clerk-JWT loader for the opt-in web backend.
 
-Three-tier strategy, ported from ``jfikrat/higgsfield-mcp/src/auth.ts`` with
-Python-friendly fallbacks:
+Higgsfield's web app uses Clerk for auth. The browser holds two cookies:
 
-1. **Cached refresh** — read a JWT plus refresh metadata from
-   ``~/.config/higgsfield-mcp/settings.json``. If the JWT is expired but a
-   refresh cookie is present, hit Clerk's ``/v1/client`` endpoint to get a new
-   one and write it back.
-2. **Manual env override** — ``HIGGSFIELD_JWT`` always wins. Useful for
-   ephemeral shells, CI smoke tests, and "I just pasted the cookie".
-3. **Hard fail with a useful message** — if neither path yields a token, raise
-   ``MissingJWTError`` with instructions on where to grab the cookie.
+* ``__client`` — long-lived (~7 days, refreshed on activity) device-bound
+  authentication token. This is what we ask the user to paste so the MCP can
+  mint short-lived session JWTs without requiring a fresh paste every 4 minutes.
+* ``__session`` — short-lived (~1 minute) JWT, the actual bearer token attached
+  to API requests. Issued by Clerk on demand from a ``__client`` cookie.
 
-We deliberately do not try to scrape browser cookies on disk (the upstream
-"Helm browser daemon" path) — it's brittle, requires extra deps, and is best
-left to a separate optional package.
+Strategy (most-preferred first):
+
+1. **Long-lived auth via __client** (recommended). User sets
+   ``HIGGSFIELD_CLERK_CLIENT``; we hit ``GET /v1/client`` to discover the active
+   session id, then ``POST /v1/client/sessions/{sid}/tokens`` to mint a fresh
+   JWT. We cache the JWT in memory until it's within 30s of expiry. The user
+   only needs to re-paste the cookie roughly weekly.
+2. **Manual JWT** (``HIGGSFIELD_JWT``). Single short-lived paste — useful for
+   smoke tests but expires in ~4 minutes. Always wins if set, so it's a clean
+   override.
+3. **Hard fail** with a useful message pointing the user at the cookie.
+
+All Clerk traffic flows through ``curl_cffi`` impersonating Chrome — the same
+TLS-fingerprint workaround we use for Datadome on ``fnf.higgsfield.ai``.
 """
 
 from __future__ import annotations
 
-import contextlib
+import asyncio
 import json
 import os
 import time
 from base64 import urlsafe_b64decode
 from dataclasses import dataclass
-from pathlib import Path
 
-import httpx
+from curl_cffi.requests import AsyncSession
 
-CLERK_REFRESH_URL = "https://clerk.higgsfield.ai/v1/client/sessions/{sid}/tokens"
-SETTINGS_PATH = Path.home() / ".config" / "higgsfield-mcp" / "settings.json"
+CLERK_BASE = "https://clerk.higgsfield.ai"
+CLERK_VERSION_PARAMS = {"__clerk_api_version": "2024-10-01", "_clerk_js_version": "5.95.0"}
+COMMON_HEADERS = {
+    "Accept": "*/*",
+    "Origin": "https://cloud.higgsfield.ai",
+    "Referer": "https://cloud.higgsfield.ai/",
+}
 
 
 @dataclass
 class JWTAuth:
     jwt: str
-    expires_at: float | None = None  # epoch seconds, when known
+    expires_at: float | None = None
 
     @property
     def header(self) -> str:
@@ -49,14 +60,12 @@ class JWTAuth:
 
 
 class MissingJWTError(RuntimeError):
-    """No usable JWT could be loaded for the web backend."""
+    """No usable Clerk credentials are configured."""
 
 
 def _decode_exp(jwt: str) -> float | None:
-    """Best-effort extraction of the ``exp`` claim from a JWT. Never raises."""
     try:
         payload_b64 = jwt.split(".")[1]
-        # base64 in JWTs is url-safe and may be missing padding
         padded = payload_b64 + "=" * (-len(payload_b64) % 4)
         payload = json.loads(urlsafe_b64decode(padded))
         exp = payload.get("exp")
@@ -65,34 +74,46 @@ def _decode_exp(jwt: str) -> float | None:
         return None
 
 
-def _load_settings() -> dict[str, object]:
-    if not SETTINGS_PATH.exists():
-        return {}
+async def _discover_session_id(session: AsyncSession, client_cookie: str) -> str | None:  # type: ignore[type-arg]
+    """Call ``/v1/client`` with the ``__client`` cookie to find the active session id."""
+    resp = await session.get(
+        f"{CLERK_BASE}/v1/client",
+        params=CLERK_VERSION_PARAMS,
+        headers=COMMON_HEADERS,
+        cookies={"__client": client_cookie},
+    )
+    if resp.status_code != 200:
+        return None
     try:
-        data: dict[str, object] = json.loads(SETTINGS_PATH.read_text())
-    except (OSError, json.JSONDecodeError):
-        return {}
-    return data
+        data = resp.json()
+    except ValueError:
+        return None
+    response = data.get("response") if isinstance(data, dict) else None
+    if not isinstance(response, dict):
+        return None
+    last_active = response.get("last_active_session_id")
+    if isinstance(last_active, str) and last_active:
+        return last_active
+    sessions = response.get("sessions")
+    if isinstance(sessions, list):
+        for s in sessions:
+            if isinstance(s, dict):
+                sid = s.get("id")
+                status = s.get("status")
+                if isinstance(sid, str) and (status is None or status == "active"):
+                    return sid
+    return None
 
 
-def _save_settings(data: dict[str, object]) -> None:
-    SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
-    SETTINGS_PATH.write_text(json.dumps(data, indent=2))
-    # Tighten perms — the file holds a session token.
-    with contextlib.suppress(OSError):
-        SETTINGS_PATH.chmod(0o600)
-
-
-async def _refresh(session_id: str, client_token: str) -> str | None:
-    """Try the Clerk refresh endpoint. Returns a new JWT or None."""
-    async with httpx.AsyncClient(timeout=15.0) as client:
-        try:
-            resp = await client.post(
-                CLERK_REFRESH_URL.format(sid=session_id),
-                headers={"Authorization": f"Bearer {client_token}"},
-            )
-        except httpx.HTTPError:
-            return None
+async def _mint_token(session: AsyncSession, client_cookie: str, sid: str) -> str | None:  # type: ignore[type-arg]
+    """Mint a fresh session JWT via Clerk's tokens endpoint."""
+    resp = await session.post(
+        f"{CLERK_BASE}/v1/client/sessions/{sid}/tokens",
+        params=CLERK_VERSION_PARAMS,
+        headers=COMMON_HEADERS,
+        cookies={"__client": client_cookie},
+        data="",  # Clerk expects an empty form body, not JSON
+    )
     if resp.status_code != 200:
         return None
     try:
@@ -103,34 +124,65 @@ async def _refresh(session_id: str, client_token: str) -> str | None:
     return str(jwt) if isinstance(jwt, str) else None
 
 
+class ClerkRefresher:
+    """Caches the active session id and the most recent minted JWT in memory."""
+
+    def __init__(self, client_cookie: str) -> None:
+        self._client_cookie = client_cookie
+        self._sid: str | None = None
+        self._jwt: JWTAuth | None = None
+        self._lock = asyncio.Lock()
+
+    async def get(self) -> JWTAuth:
+        async with self._lock:
+            if self._jwt is not None and not self._jwt.is_expired():
+                return self._jwt
+            async with AsyncSession(impersonate="chrome120") as session:
+                if self._sid is None:
+                    self._sid = await _discover_session_id(session, self._client_cookie)
+                    if self._sid is None:
+                        raise MissingJWTError(
+                            "Clerk /v1/client returned no active session for the supplied "
+                            "__client cookie. The cookie may be expired or invalid; copy a "
+                            "fresh value from cloud.higgsfield.ai DevTools."
+                        )
+                jwt = await _mint_token(session, self._client_cookie, self._sid)
+                if jwt is None:
+                    # Try once more after re-discovering the sid (it may have rotated).
+                    self._sid = await _discover_session_id(session, self._client_cookie)
+                    if self._sid is not None:
+                        jwt = await _mint_token(session, self._client_cookie, self._sid)
+                if jwt is None:
+                    raise MissingJWTError(
+                        "Clerk refused to mint a session JWT. The __client cookie is "
+                        "probably expired or stale. Copy a fresh value from "
+                        "cloud.higgsfield.ai DevTools and re-export HIGGSFIELD_CLERK_CLIENT."
+                    )
+                self._jwt = JWTAuth(jwt=jwt, expires_at=_decode_exp(jwt))
+                return self._jwt
+
+
+_REFRESHER: ClerkRefresher | None = None
+
+
 async def load_jwt() -> JWTAuth:
-    """Load a JWT for the web backend, refreshing if needed."""
+    """Resolve a Bearer JWT for the web backend, refreshing if needed."""
     # 1. explicit env override
     env_jwt = os.getenv("HIGGSFIELD_JWT")
     if env_jwt:
         return JWTAuth(jwt=env_jwt, expires_at=_decode_exp(env_jwt))
 
-    # 2. cached settings
-    settings = _load_settings()
-    cached_jwt = settings.get("jwt") if isinstance(settings.get("jwt"), str) else None
-    if isinstance(cached_jwt, str):
-        auth = JWTAuth(jwt=cached_jwt, expires_at=_decode_exp(cached_jwt))
-        if not auth.is_expired():
-            return auth
-        sid = settings.get("session_id")
-        client_token = settings.get("client_token")
-        if isinstance(sid, str) and isinstance(client_token, str):
-            new_jwt = await _refresh(sid, client_token)
-            if new_jwt:
-                refreshed = JWTAuth(jwt=new_jwt, expires_at=_decode_exp(new_jwt))
-                settings["jwt"] = new_jwt
-                _save_settings(settings)
-                return refreshed
+    # 2. long-lived __client cookie via Clerk refresh
+    client_cookie = os.getenv("HIGGSFIELD_CLERK_CLIENT")
+    if client_cookie:
+        global _REFRESHER
+        if _REFRESHER is None or _REFRESHER._client_cookie != client_cookie:
+            _REFRESHER = ClerkRefresher(client_cookie)
+        return await _REFRESHER.get()
 
     raise MissingJWTError(
-        "No valid JWT for cloud.higgsfield.ai. Set HIGGSFIELD_JWT to a token "
-        "copied from your browser DevTools (Application -> Cookies -> __session "
-        "on cloud.higgsfield.ai), or write one to "
-        f"{SETTINGS_PATH}. The web backend is opt-in; consider whether you "
-        "really need it before paste-bypassing official auth."
+        "No Clerk credentials configured. Set HIGGSFIELD_CLERK_CLIENT to the value of "
+        "the __client cookie from cloud.higgsfield.ai (recommended; lasts ~7 days), or "
+        "set HIGGSFIELD_JWT to a __session cookie (expires in ~4 minutes). "
+        "Open DevTools -> Application -> Cookies on cloud.higgsfield.ai to find them."
     )

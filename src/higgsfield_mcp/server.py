@@ -139,7 +139,24 @@ def build_server() -> FastMCP:
     return mcp
 
 
+def _maybe_warn_web_backend() -> None:
+    """Print a stderr warning if the experimental web backend is enabled."""
+    import os
+    import sys
+
+    if os.getenv("HIGGSFIELD_ENABLE_WEB_BACKEND") in ("1", "true", "True", "yes"):
+        print(
+            "[higgsfield-mcp] WARN: web backend is enabled. "
+            "This is EXPERIMENTAL and reverse-engineered. "
+            "Expect Cloudflare/Datadome blocks, ~1-min JWT churn, and silent schema "
+            "drift. See the README 'Web backend is experimental' section. "
+            "Official models via HIGGSFIELD_API_KEY are unaffected.",
+            file=sys.stderr,
+        )
+
+
 def main() -> None:
+    _maybe_warn_web_backend()
     server = build_server()
     server.run()
 

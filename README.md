@@ -34,13 +34,30 @@ To unlock Sora 2 / Veo 3 / Kling 3.0 / etc., opt in to the web backend:
 
 ```bash
 export HIGGSFIELD_ENABLE_WEB_BACKEND=1
-export HIGGSFIELD_JWT=...            # paste a JWT from cloud.higgsfield.ai (DevTools → cookies)
+export HIGGSFIELD_CLERK_CLIENT=...   # __client cookie from cloud.higgsfield.ai (lasts ~7 days)
+# or, for one-shot tests only:
+export HIGGSFIELD_JWT=...            # __session cookie (expires in ~1 minute)
 ```
 
-**Heads up on the web backend:**
-- Uses unofficial web-app auth that may break at any time.
-- Probably outside Higgsfield's published terms of use — review them before turning this on.
-- Off by default. Without `HIGGSFIELD_ENABLE_WEB_BACKEND=1`, only the 8 official models are reachable.
+> ## Web backend is experimental and will likely break
+>
+> Reading this carefully will save you hours of frustration.
+>
+> The cloud.higgsfield.ai / fnf.higgsfield.ai surface is **not a public API**.
+> It is the consumer web app's private backend.
+> Treating it as an API is unsupported by Higgsfield and the integration is held together by reverse-engineering.
+>
+> Concretely you should expect:
+>
+> - **Auth churn.** The Clerk JWT lives ~1 minute. The MCP refreshes it from a long-lived `__client` cookie, but Clerk also rotates that cookie on its own schedule (~7 days). When it rotates, every request fails until you paste a new one.
+> - **Bot protection.** `fnf.higgsfield.ai` sits behind both Cloudflare and Datadome. Browser-impersonating TLS (`curl_cffi`) clears the basic check, but the protections fingerprint request rate, body shape, header order, and TLS extension layout. After a few rapid requests from a non-residential IP you will be hard-blocked with a 403 Cloudflare "Attention Required" page until your IP cools off.
+> - **Schema drift.** The endpoint paths, body keys (e.g. `width`/`height`/`medias` vs `aspect_ratio`/`resolution`), and model slugs are not documented and change without notice. Some entries inherited from upstream (`seedance2`, `kling3`, `nano-banana-1`) appear stale next to the live consumer app, which uses underscored slugs (`seedance_2_0`, `kling3_0`, `imagegen_2_0`).
+> - **JWT audience matters.** Tokens minted on `cloud.higgsfield.ai` are scoped `azp=cloud.higgsfield.ai` and are rejected by `fnf.higgsfield.ai`. You need a token issued for `azp=higgsfield.ai`, which means logging in to the consumer app at `higgsfield.ai`, not the developer dashboard.
+> - **Probably against ToS.** Higgsfield publishes a paid official API at `platform.higgsfield.ai`. Driving the consumer web app programmatically is almost certainly not what they want you to do. Review the terms before turning this on.
+>
+> Off by default.
+> Without `HIGGSFIELD_ENABLE_WEB_BACKEND=1`, only the official-API models are reachable, and that path is rock-solid.
+> If you need Sora 2 / Veo 3 / Kling 3.0 reliably, the supported route is the consumer subscription on higgsfield.ai or waiting for those models to appear on the official API.
 
 ### Claude Desktop
 

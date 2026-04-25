@@ -22,6 +22,7 @@ dependencies = [
     "httpx>=0.27.0",
     "pydantic>=2.6.0",
     "anyio>=4.3.0",
+    "curl-cffi>=0.15.0",
 ]
 
 [project.optional-dependencies]
@@ -62,6 +63,11 @@ python_version = "3.10"
 strict = true
 warn_return_any = true
 warn_unused_configs = true
+
+[[tool.mypy.overrides]]
+module = ["curl_cffi.*"]
+ignore_missing_imports = true
+disable_error_code = ["type-arg"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
