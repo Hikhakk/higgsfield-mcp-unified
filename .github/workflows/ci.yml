@@ -13,8 +13,11 @@ jobs:
   lint-type-test:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         python-version: ["3.10", "3.11", "3.12"]
+    env:
+      UV_PYTHON: ${{ matrix.python-version }}
     steps:
       - uses: actions/checkout@v4
 
@@ -22,12 +25,10 @@ jobs:
         uses: astral-sh/setup-uv@v3
         with:
           enable-cache: true
-
-      - name: Set Python ${{ matrix.python-version }}
-        run: uv python install ${{ matrix.python-version }}
+          python-version: ${{ matrix.python-version }}
 
       - name: Sync deps
-        run: uv sync --extra dev --python ${{ matrix.python-version }}
+        run: uv sync --all-extras --frozen
 
       - name: Ruff lint
         run: uv run ruff check .
