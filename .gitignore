@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+*.egg
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# uv
+uv.lock
+
+# IDE
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Local secrets / settings
+.env
+.env.*
+!.env.example
+settings.json

@@ -1,0 +1,38 @@
+name: New model request
+description: Add a model_id to the registry
+labels: ["model-request"]
+body:
+  - type: input
+    id: model_id
+    attributes:
+      label: Proposed model_id
+      placeholder: e.g. veo-3.1
+    validations:
+      required: true
+  - type: dropdown
+    id: backend
+    attributes:
+      label: Backend
+      options:
+        - official
+        - web
+    validations:
+      required: true
+  - type: input
+    id: endpoint
+    attributes:
+      label: Endpoint path
+      placeholder: e.g. /jobs/v2/veo3_1 or vendor/model/variant
+    validations:
+      required: true
+  - type: textarea
+    id: source
+    attributes:
+      label: Public source for these values
+      description: Higgsfield docs link, official SDK example, or reproducible network capture
+    validations:
+      required: true
+  - type: textarea
+    id: params
+    attributes:
+      label: Supported parameters and constraints

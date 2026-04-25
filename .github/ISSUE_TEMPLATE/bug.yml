@@ -1,0 +1,42 @@
+name: Bug report
+description: Something is broken or behaves wrong
+labels: ["bug"]
+body:
+  - type: dropdown
+    id: backend
+    attributes:
+      label: Backend
+      options:
+        - official (platform.higgsfield.ai)
+        - web (cloud.higgsfield.ai)
+        - both / unsure
+        - server / tooling
+    validations:
+      required: true
+  - type: input
+    id: model
+    attributes:
+      label: model_id
+      placeholder: e.g. higgsfield-ai/soul/standard
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction
+      description: Minimal steps. Do NOT paste API keys or JWTs.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected vs actual
+    validations:
+      required: true
+  - type: textarea
+    id: env
+    attributes:
+      label: Environment
+      placeholder: |
+        - higgsfield-mcp-unified version:
+        - Python:
+        - OS:
+        - MCP client (Claude Desktop / Cursor / ...):

@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "higgsfield": {
+      "command": "uvx",
+      "args": ["higgsfield-mcp"],
+      "env": {
+        "HIGGSFIELD_API_KEY": "your-key",
+        "HIGGSFIELD_SECRET": "your-secret",
+
+        "_comment": "Uncomment the next two lines to enable the cloud.higgsfield.ai web backend (Sora 2, Veo 3, Kling 3.0, etc.). Read the README first.",
+        "// HIGGSFIELD_ENABLE_WEB_BACKEND": "1",
+        "// HIGGSFIELD_JWT": "paste-your-cookie-jwt-here"
+      }
+    }
+  }
+}

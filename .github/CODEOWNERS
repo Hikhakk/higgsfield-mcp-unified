@@ -1,0 +1,4 @@
+# Every file in this repo is owned by @Hikhakk.
+# Branch protection on `main` is configured to require an approving review
+# from a code owner before merge — this is the mechanism that gates the repo.
+*       @Hikhakk

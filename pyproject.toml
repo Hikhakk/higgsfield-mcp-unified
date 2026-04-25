@@ -1,0 +1,68 @@
+[project]
+name = "higgsfield-mcp-unified"
+version = "0.1.0"
+description = "Unified MCP server for Higgsfield AI: official platform.higgsfield.ai API + opt-in cloud.higgsfield.ai web backend, exposing 27 image and video models."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Hikhakk" }]
+keywords = ["mcp", "model-context-protocol", "higgsfield", "ai", "image-generation", "video-generation", "sora", "veo", "kling"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries",
+]
+dependencies = [
+    "fastmcp>=0.2.0",
+    "httpx>=0.27.0",
+    "pydantic>=2.6.0",
+    "anyio>=4.3.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "respx>=0.21.0",
+    "ruff>=0.5.0",
+    "mypy>=1.10.0",
+]
+
+[project.scripts]
+higgsfield-mcp = "higgsfield_mcp.server:main"
+
+[project.urls]
+Homepage = "https://github.com/Hikhakk/higgsfield-mcp-unified"
+Repository = "https://github.com/Hikhakk/higgsfield-mcp-unified"
+Issues = "https://github.com/Hikhakk/higgsfield-mcp-unified/issues"
+
+[build-system]
+requires = ["uv_build>=0.9.10,<0.10.0"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "higgsfield_mcp"
+module-root = "src"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM", "RUF"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
