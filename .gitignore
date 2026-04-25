@@ -15,9 +15,6 @@ dist/
 .coverage
 htmlcov/
 
-# uv
-uv.lock
-
 # IDE
 .vscode/
 .idea/
