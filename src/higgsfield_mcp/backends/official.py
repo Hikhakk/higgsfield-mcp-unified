@@ -45,6 +45,7 @@ class OfficialBackend(BackendDriver):
 
     def __init__(self, *, auth: ApiKeyAuth | None = None, base_url: str = BASE_URL) -> None:
         self._auth = auth or load_from_env()
+        self._base_url = base_url
         self._client = httpx.AsyncClient(
             base_url=base_url,
             headers={
@@ -152,6 +153,46 @@ class OfficialBackend(BackendDriver):
                     body=put.text,
                 )
         return str(public_url)
+
+    async def _v1_request(
+        self, method: str, path: str, *, json: dict[str, Any] | None = None
+    ) -> Any:
+        """Call a legacy /v1/ (or /agents/) endpoint with hf-api-key/hf-secret auth.
+
+        A dedicated client is used so the v2 ``Key`` Authorization default is not sent.
+        Response shapes are undocumented; callers parse defensively.
+        """
+        headers = {
+            **self._auth.v1_headers,
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+        }
+        self._breaker.check()
+        async with httpx.AsyncClient(
+            base_url=self._base_url, timeout=httpx.Timeout(60.0, connect=10.0)
+        ) as client:
+
+            async def _send() -> httpx.Response:
+                try:
+                    return await client.request(method, path, json=json, headers=headers)
+                except httpx.HTTPError as exc:
+                    raise NetworkError(str(exc)) from exc
+
+            try:
+                resp = cast(httpx.Response, await retrying_request(_send, max_attempts=3))
+            except Exception:
+                self._breaker.record_failure()
+                raise
+        if resp.status_code >= 500:
+            self._breaker.record_failure()
+        else:
+            self._breaker.record_success()
+        if resp.status_code >= 400:
+            raise classify_http(resp.status_code, resp.text, dict(resp.headers))
+        try:
+            return resp.json()
+        except ValueError as exc:
+            raise BackendError(f"Invalid JSON response: {resp.text[:200]}") from exc
 
     @staticmethod
     def _extract_image_urls(body: dict[str, Any]) -> list[str]:
