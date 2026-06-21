@@ -11,11 +11,12 @@ from __future__ import annotations
 
 import asyncio
 import random
+import time
 import uuid
 from collections.abc import Awaitable, Callable
 from typing import Protocol
 
-from higgsfield_mcp.errors import NetworkError, parse_retry_after
+from higgsfield_mcp.errors import CircuitOpenError, NetworkError, parse_retry_after
 
 RETRYABLE_STATUS: frozenset[int] = frozenset({429, 502, 503, 504})
 
@@ -88,3 +89,46 @@ async def retrying_request(
         raise last_exc
     assert resp is not None
     return resp
+
+
+class CircuitBreaker:
+    """Fail-fast breaker, one instance per backend.
+
+    A single-process local server, so a per-instance breaker is our interpretation
+    of the spec's "module-level, keyed by base URL" wording. Opens after ``fail_max``
+    consecutive failures. After ``reset_timeout`` elapses, ``check()`` stops failing
+    fast and lets requests through (half-open); the next ``record_success`` closes it,
+    the next ``record_failure`` re-opens it. Probe gating is not concurrency-strict,
+    which is acceptable for our low-concurrency local use.
+    """
+
+    def __init__(
+        self,
+        *,
+        fail_max: int = 5,
+        reset_timeout: float = 120.0,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self._fail_max = fail_max
+        self._reset_timeout = reset_timeout
+        self._clock = clock
+        self._fails = 0
+        self._opened_at: float | None = None
+
+    def check(self) -> None:
+        if self._opened_at is None:
+            return
+        if self._clock() - self._opened_at >= self._reset_timeout:
+            return  # half-open: allow one probe
+        raise CircuitOpenError(
+            "Backend circuit is open after repeated failures; cooling down. Retry shortly."
+        )
+
+    def record_success(self) -> None:
+        self._fails = 0
+        self._opened_at = None
+
+    def record_failure(self) -> None:
+        self._fails += 1
+        if self._fails >= self._fail_max:
+            self._opened_at = self._clock()

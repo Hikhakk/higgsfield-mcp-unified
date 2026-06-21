@@ -3,9 +3,10 @@ from __future__ import annotations
 
 import pytest
 
-from higgsfield_mcp.errors import NetworkError
+from higgsfield_mcp.errors import CircuitOpenError, NetworkError
 from higgsfield_mcp.reliability import (
     RETRYABLE_STATUS,  # noqa: F401
+    CircuitBreaker,
     backoff_delay,
     new_idempotency_key,
     retrying_request,
@@ -96,3 +97,27 @@ async def test_non_retryable_status_returned_immediately() -> None:
 
     resp = await retrying_request(send, sleep=fake_sleep)
     assert resp.status_code == 400
+
+
+def test_circuit_opens_after_fail_max() -> None:
+    t = {"now": 0.0}
+    cb = CircuitBreaker(fail_max=2, reset_timeout=10.0, clock=lambda: t["now"])
+    cb.check()  # closed: ok
+    cb.record_failure()
+    cb.check()  # still closed after 1 failure
+    cb.record_failure()
+    with pytest.raises(CircuitOpenError):
+        cb.check()  # open after 2 failures
+
+
+def test_circuit_half_opens_after_timeout_then_success_closes() -> None:
+    t = {"now": 0.0}
+    cb = CircuitBreaker(fail_max=1, reset_timeout=10.0, clock=lambda: t["now"])
+    cb.record_failure()
+    with pytest.raises(CircuitOpenError):
+        cb.check()
+    t["now"] = 11.0  # past reset_timeout -> half-open allows a probe
+    cb.check()  # no raise
+    cb.record_success()
+    t["now"] = 12.0
+    cb.check()  # fully closed again
