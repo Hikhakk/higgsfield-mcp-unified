@@ -120,3 +120,26 @@ async def test_refuses_web_model(auth: ApiKeyAuth) -> None:
             await backend.submit(spec, {})
     finally:
         await backend.aclose()
+
+
+@pytest.mark.asyncio
+async def test_upload_two_step(auth: ApiKeyAuth) -> None:
+    backend = OfficialBackend(auth=auth)
+    try:
+        with respx.mock(assert_all_called=True) as mock:
+            mock.post(f"{BASE_URL}/files/generate-upload-url").mock(
+                return_value=httpx.Response(
+                    200,
+                    json={
+                        "upload_url": "https://s3.example/put?sig=1",
+                        "public_url": "https://cdn.higgsfield/abc.png",
+                    },
+                )
+            )
+            put = mock.put("https://s3.example/put").mock(return_value=httpx.Response(200))
+            url = await backend.upload(b"\x89PNG...", "image/png")
+        assert url == "https://cdn.higgsfield/abc.png"
+        assert put.calls.last.request.headers["Content-Type"] == "image/png"
+        assert "Authorization" not in put.calls.last.request.headers
+    finally:
+        await backend.aclose()

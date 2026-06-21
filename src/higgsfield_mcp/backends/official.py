@@ -95,12 +95,27 @@ class OfficialBackend(BackendDriver):
             )
 
     async def upload(self, data: bytes, mime: str) -> str:
-        # The official docs do not document a generic upload endpoint; the SDK
-        # ships its own uploader. Until we wire that in, callers must pass URLs.
-        raise BackendError(
-            "Official backend uploads are not implemented yet. "
-            "Pass an externally-hosted image_url, or open a feature request.",
+        resp = await self._client.post(
+            "/files/generate-upload-url", json={"content_type": mime}
         )
+        body = self._json_or_raise(resp)
+        upload_url = body.get("upload_url")
+        public_url = body.get("public_url") or body.get("url")
+        if not upload_url or not public_url:
+            raise BackendError(
+                f"generate-upload-url response missing upload_url/public_url: {body!r}",
+                status_code=resp.status_code,
+            )
+        # The signed PUT must NOT carry the platform Authorization header.
+        async with httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=10.0)) as raw:
+            put = await raw.put(upload_url, content=data, headers={"Content-Type": mime})
+            if put.status_code >= 400:
+                raise BackendError(
+                    f"Signed upload PUT failed: HTTP {put.status_code}",
+                    status_code=put.status_code,
+                    body=put.text,
+                )
+        return str(public_url)
 
     @staticmethod
     def _extract_image_urls(body: dict[str, Any]) -> list[str]:
