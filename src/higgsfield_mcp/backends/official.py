@@ -45,6 +45,7 @@ class OfficialBackend(BackendDriver):
 
     def __init__(self, *, auth: ApiKeyAuth | None = None, base_url: str = BASE_URL) -> None:
         self._auth = auth or load_from_env()
+        self._base_url = base_url
         self._client = httpx.AsyncClient(
             base_url=base_url,
             headers={
@@ -152,6 +153,152 @@ class OfficialBackend(BackendDriver):
                     body=put.text,
                 )
         return str(public_url)
+
+    async def _v1_request(
+        self, method: str, path: str, *, json: dict[str, Any] | None = None
+    ) -> Any:
+        """Call a legacy /v1/ (or /agents/) endpoint with hf-api-key/hf-secret auth.
+
+        A dedicated client is used so the v2 ``Key`` Authorization default is not sent.
+        Response shapes are undocumented; callers parse defensively.
+        """
+        headers = {
+            **self._auth.v1_headers,
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+        }
+        self._breaker.check()
+        async with httpx.AsyncClient(
+            base_url=self._base_url, timeout=httpx.Timeout(60.0, connect=10.0)
+        ) as client:
+
+            async def _send() -> httpx.Response:
+                try:
+                    return await client.request(method, path, json=json, headers=headers)
+                except httpx.HTTPError as exc:
+                    raise NetworkError(str(exc)) from exc
+
+            try:
+                resp = cast(httpx.Response, await retrying_request(_send, max_attempts=3))
+            except Exception:
+                self._breaker.record_failure()
+                raise
+        if resp.status_code >= 500:
+            self._breaker.record_failure()
+        else:
+            self._breaker.record_success()
+        if resp.status_code >= 400:
+            raise classify_http(resp.status_code, resp.text, dict(resp.headers))
+        try:
+            return resp.json()
+        except ValueError as exc:
+            raise BackendError(f"Invalid JSON response: {resp.text[:200]}") from exc
+
+    @staticmethod
+    def _character_view(raw: dict[str, Any]) -> dict[str, Any]:
+        images = raw.get("image_urls") or raw.get("images") or raw.get("medias") or []
+        return {
+            "id": raw.get("id") or raw.get("custom_reference_id") or raw.get("soul_id") or "",
+            "name": raw.get("name") or raw.get("title") or "",
+            "status": str(raw.get("status") or raw.get("state") or "unknown"),
+            "image_count": len(images) if isinstance(images, list) else 0,
+            "raw": raw,
+        }
+
+    async def create_character(self, name: str, image_urls: list[str]) -> dict[str, Any]:
+        body = self._v1_payload_create(name, image_urls)
+        raw = await self._v1_request("POST", "/v1/custom-references", json=body)
+        return self._character_view(raw if isinstance(raw, dict) else {"raw": raw})
+
+    @staticmethod
+    def _v1_payload_create(name: str, image_urls: list[str]) -> dict[str, Any]:
+        # Request shape is a best guess (CLI says 5-20 training images).
+        return {"name": name, "image_urls": list(image_urls)}
+
+    async def get_character(self, character_id: str) -> dict[str, Any]:
+        raw = await self._v1_request("GET", f"/v1/custom-references/{character_id}")
+        return self._character_view(raw if isinstance(raw, dict) else {"raw": raw})
+
+    async def list_characters(self, page: int = 1, page_size: int = 50) -> dict[str, Any]:
+        raw = await self._v1_request(
+            "GET", f"/v1/custom-references/list?page={page}&page_size={page_size}"
+        )
+        items: list[Any] = []
+        if isinstance(raw, dict):
+            for key in ("items", "results", "custom_references", "data"):
+                v = raw.get(key)
+                if isinstance(v, list):
+                    items = v
+                    break
+        elif isinstance(raw, list):
+            items = raw
+        chars = [self._character_view(i) for i in items if isinstance(i, dict)]
+        return {"count": len(chars), "characters": chars}
+
+    async def delete_character(self, character_id: str) -> dict[str, Any]:
+        await self._v1_request("DELETE", f"/v1/custom-references/{character_id}")
+        return {"deleted": True, "character_id": character_id}
+
+    @staticmethod
+    def _names_view(raw: Any) -> dict[str, Any]:
+        names: list[str] = []
+        seq: list[Any] = []
+        if isinstance(raw, list):
+            seq = raw
+        elif isinstance(raw, dict):
+            for key in ("styles", "motions", "items", "results", "data"):
+                v = raw.get(key)
+                if isinstance(v, list):
+                    seq = v
+                    break
+        for entry in seq:
+            if isinstance(entry, str):
+                names.append(entry)
+            elif isinstance(entry, dict):
+                n = entry.get("name") or entry.get("id") or entry.get("slug")
+                if n:
+                    names.append(str(n))
+        return {"count": len(names), "names": names, "raw": raw if isinstance(raw, dict) else {}}
+
+    async def get_balance(self) -> dict[str, Any]:
+        raw = await self._v1_request("POST", "/v1/billing/credits", json={})
+        d = raw if isinstance(raw, dict) else {}
+        credits = d.get("credits")
+        if credits is None:
+            credits = d.get("balance") or d.get("available_credits")
+        return {"credits": credits, "plan": d.get("plan") or d.get("tier"), "raw": d}
+
+    async def list_jobs_official(self, page: int = 1, page_size: int = 20) -> dict[str, Any]:
+        raw = await self._v1_request(
+            "POST", "/agents/jobs", json={"page": page, "page_size": page_size}
+        )
+        jobs: list[Any] = []
+        if isinstance(raw, dict):
+            for key in ("jobs", "items", "results", "job_sets", "data"):
+                v = raw.get(key)
+                if isinstance(v, list):
+                    jobs = v
+                    break
+        elif isinstance(raw, list):
+            jobs = raw
+        return {"count": len(jobs), "jobs": [j for j in jobs if isinstance(j, dict)]}
+
+    async def list_soul_styles(self) -> dict[str, Any]:
+        return self._names_view(await self._v1_request("GET", "/v1/text2image/soul-styles"))
+
+    async def list_motions(self) -> dict[str, Any]:
+        return self._names_view(await self._v1_request("GET", "/v1/motions"))
+
+    async def speak(self, image_url: str, audio_url: str, prompt: str | None = None) -> JobHandle:
+        body: dict[str, Any] = {"input_image_url": image_url, "audio_url": audio_url}
+        if prompt:
+            body["prompt"] = prompt
+        raw = await self._v1_request("POST", "/v1/speak/higgsfield", json=body)
+        d = raw if isinstance(raw, dict) else {}
+        request_id = d.get("request_id") or d.get("id") or d.get("job_id")
+        if not request_id:
+            raise SchemaError(f"speak response missing request_id: {d!r}")
+        return JobHandle(backend="official", request_id=str(request_id))
 
     @staticmethod
     def _extract_image_urls(body: dict[str, Any]) -> list[str]:

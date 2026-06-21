@@ -10,9 +10,15 @@ from higgsfield_mcp import __version__
 from higgsfield_mcp.models import Backend, Kind
 from higgsfield_mcp.resources import register_resources
 from higgsfield_mcp.schemas import (
+    Balance,
     CancelResult,
+    Character,
+    CharacterDeleted,
+    CharacterList,
+    JobList,
     JobStatusResult,
     ModelList,
+    NameList,
     PreflightResult,
     RecommendResult,
     SubmitResult,
@@ -22,10 +28,19 @@ from higgsfield_mcp.schemas import (
 from higgsfield_mcp.tools import (
     BackendPool,
     cancel_job,
+    create_character,
+    delete_character,
     generate_image,
+    generate_speech_video,
     generate_video,
+    get_balance,
+    get_character,
     get_status,
+    list_characters,
+    list_jobs,
     list_models,
+    list_motions,
+    list_soul_styles,
     preflight_check,
     recommend_model,
     subscribe,
@@ -77,6 +92,8 @@ def build_server() -> FastMCP:
         seed: int | None = None,
         batch_size: int | None = None,
         enhance_prompt: bool | None = None,
+        soul_id: str | None = None,
+        soul_strength: float | None = None,
     ) -> SubmitResult:
         """Submit an image-generation request. Returns a job_handle to poll."""
         return SubmitResult.model_validate(
@@ -92,6 +109,8 @@ def build_server() -> FastMCP:
                 seed=seed,
                 batch_size=batch_size,
                 enhance_prompt=enhance_prompt,
+                soul_id=soul_id,
+                soul_strength=soul_strength,
             )
         )
 
@@ -182,6 +201,63 @@ def build_server() -> FastMCP:
     async def validate_params_tool(model_id: str, params: dict[str, Any]) -> ValidateResult:
         """Pre-flight check params against a model's supported set (no generation)."""
         return ValidateResult.model_validate(await validate_params(model_id, params))
+
+    @mcp.tool
+    async def create_character_tool(name: str, image_urls: list[str]) -> Character:
+        """Train a reusable Soul character from reference images. Results best-effort until verified."""
+        return Character.model_validate(
+            await create_character(pool, name=name, image_urls=image_urls)
+        )
+
+    @mcp.tool
+    async def get_character_tool(character_id: str) -> Character:
+        """Check a Soul character's training status."""
+        return Character.model_validate(await get_character(pool, character_id=character_id))
+
+    @mcp.tool
+    async def list_characters_tool(page: int = 1, page_size: int = 50) -> CharacterList:
+        """List trained Soul characters."""
+        return CharacterList.model_validate(
+            await list_characters(pool, page=page, page_size=page_size)
+        )
+
+    @mcp.tool
+    async def delete_character_tool(character_id: str) -> CharacterDeleted:
+        """Delete a trained Soul character."""
+        return CharacterDeleted.model_validate(
+            await delete_character(pool, character_id=character_id)
+        )
+
+    @mcp.tool
+    async def get_balance_tool() -> Balance:
+        """Get available credits + plan (best-effort; official API key required)."""
+        return Balance.model_validate(await get_balance(pool))
+
+    @mcp.tool
+    async def list_jobs_tool(page: int = 1, page_size: int = 20) -> JobList:
+        """List recent generations (history) from the official backend."""
+        return JobList.model_validate(await list_jobs(pool, page=page, page_size=page_size))
+
+    @mcp.tool
+    async def list_soul_styles_tool() -> NameList:
+        """List Soul image style presets to pick by name."""
+        return NameList.model_validate(await list_soul_styles(pool))
+
+    @mcp.tool
+    async def list_motions_tool() -> NameList:
+        """List DOP motion presets for image-to-video."""
+        return NameList.model_validate(await list_motions(pool))
+
+    @mcp.tool
+    async def generate_speech_video_tool(
+        image_url: str, audio_url: str, prompt: str | None = None
+    ) -> SubmitResult:
+        """Talking-head video from a face image + WAV audio (official backend)."""
+        return SubmitResult.model_validate(
+            await generate_speech_video(
+                pool, image_url=image_url, audio_url=audio_url, prompt=prompt
+            )
+        )
 
     return mcp
 

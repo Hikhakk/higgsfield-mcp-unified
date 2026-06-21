@@ -54,7 +54,13 @@ _OFFICIAL: tuple[ModelSpec, ...] = (
         kind="image",
         backend="official",
         endpoint="higgsfield-ai/soul/standard",
-        supports=("prompt", "aspect_ratio", "resolution"),
+        supports=(
+            "prompt",
+            "aspect_ratio",
+            "resolution",
+            "custom_reference_id",
+            "custom_reference_strength",
+        ),
         constraints=("aspect_ratio: free-form (e.g. '16:9')", "resolution: e.g. '720p'"),
     ),
     ModelSpec(
@@ -175,7 +181,16 @@ _WEB_IMAGE: tuple[ModelSpec, ...] = (
         kind="image",
         backend="web",
         endpoint="/jobs/v2/text2image_soul_v2",
-        supports=("prompt", "aspect_ratio", "batch_size", "enhance_prompt", "seed", "quality"),
+        supports=(
+            "prompt",
+            "aspect_ratio",
+            "batch_size",
+            "enhance_prompt",
+            "seed",
+            "quality",
+            "custom_reference_id",
+            "custom_reference_strength",
+        ),
         constraints=("quality: 720p | 1080p | 2k",),
     ),
     ModelSpec(
