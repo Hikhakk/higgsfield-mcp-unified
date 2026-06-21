@@ -15,6 +15,11 @@ class ApiKeyAuth:
     def header(self) -> str:
         return f"Key {self.api_key}:{self.secret}"
 
+    @property
+    def v1_headers(self) -> dict[str, str]:
+        """Legacy /v1/ routes authenticate with split headers, not the Key scheme."""
+        return {"hf-api-key": self.api_key, "hf-secret": self.secret}
+
 
 class MissingCredentialsError(RuntimeError):
     """Raised when the official backend is invoked without credentials."""

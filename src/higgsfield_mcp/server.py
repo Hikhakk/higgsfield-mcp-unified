@@ -15,6 +15,7 @@ from higgsfield_mcp.tools import (
     generate_video,
     get_status,
     list_models,
+    preflight_check,
     subscribe,
     upload_image,
 )
@@ -135,6 +136,11 @@ def build_server() -> FastMCP:
             poll_interval=poll_interval,
             timeout_seconds=timeout_seconds,
         )
+
+    @mcp.tool
+    async def preflight_check_tool() -> dict[str, Any]:
+        """Check auth + config for both backends before submitting a generation."""
+        return await preflight_check(pool)
 
     return mcp
 

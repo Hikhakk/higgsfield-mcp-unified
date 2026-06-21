@@ -7,29 +7,39 @@ endpoints with a Clerk JWT in the ``Authorization`` header. The shapes mirror
 Implementation notes:
 
 * Uses ``curl_cffi`` with Chrome TLS impersonation. ``fnf.higgsfield.ai`` is
-  protected by Datadome which fingerprints Python's TLS stack and blocks it
-  with a 403 captcha challenge; ``curl_cffi`` carries Chrome's exact JA3/JA4
-  signature and slips through.
+  protected by a Cloudflare TLS-fingerprint challenge which fingerprints
+  Python's TLS stack and blocks it with a 403 captcha challenge;
+  ``curl_cffi`` carries Chrome's exact JA3/JA4 signature and slips through.
 * Submit body is ``{"params": {...}, "use_unlim": false, "use_free_gens": false}``
   for V2 models, ``{"params": {...}, "use_unlim": ...}`` for V1.
 * Submit response shape: ``{"job_sets": [{"jobs": [{"id": "..."}]}]}``.
 * Status is fetched via ``GET /jobs?size=100`` and the caller filters by id.
-* ``HIGGSFIELD_DATADOME_COOKIE`` is optional but improves first-request hit
-  rate (the cookie is normally set automatically once we make any request).
+* ``HIGGSFIELD_DATADOME_COOKIE`` is a legacy Cloudflare cookie hint; optional
+  but may improve first-request hit rate.
 """
 
 from __future__ import annotations
 
+import asyncio
 import os
 from typing import Any
 
 from curl_cffi.requests import AsyncSession
 
 from higgsfield_mcp.auth.clerk import JWTAuth, load_jwt
+from higgsfield_mcp.errors import NetworkError, SchemaError, classify_http
 from higgsfield_mcp.models import Backend as BackendName
 from higgsfield_mcp.models import ModelSpec
+from higgsfield_mcp.reliability import CircuitBreaker, new_idempotency_key, retrying_request
 
 from .base import BackendDriver, BackendError, JobHandle, JobState, JobStatus
+
+try:
+    from curl_cffi.requests.exceptions import RequestException as _CurlError
+except ImportError:  # pragma: no cover - unexpected curl_cffi layout
+    _CurlError = Exception  # type: ignore[assignment,misc]
+
+_TRANSPORT_ERRORS: tuple[type[BaseException], ...] = (_CurlError, OSError)
 
 BASE_URL = "https://fnf.higgsfield.ai"
 ENABLE_FLAG = "HIGGSFIELD_ENABLE_WEB_BACKEND"
@@ -117,22 +127,32 @@ _BROWSER_HEADERS = {
 class WebBackend(BackendDriver):
     name: BackendName = "web"
 
-    def __init__(self, *, auth: JWTAuth | None = None, base_url: str = BASE_URL) -> None:
+    def __init__(
+        self,
+        *,
+        auth: JWTAuth | None = None,
+        base_url: str = BASE_URL,
+        session: Any | None = None,
+    ) -> None:
         assert_enabled()
         self._auth = auth
         self._base_url = base_url
-        self._session: AsyncSession | None = None  # type: ignore[type-arg]
+        self._session: Any | None = session
         self._datadome = os.getenv("HIGGSFIELD_DATADOME_COOKIE")
+        self._auth_lock = asyncio.Lock()
+        self._sem = asyncio.Semaphore(3)
+        self._breaker = CircuitBreaker()
 
-    async def _ensure_session(self) -> AsyncSession:  # type: ignore[type-arg]
+    async def _ensure_session(self) -> Any:
         if self._session is None:
             self._session = AsyncSession(impersonate="chrome120", timeout=60)
         return self._session
 
     async def _auth_header(self) -> dict[str, str]:
-        if self._auth is None or self._auth.is_expired():
-            self._auth = await load_jwt()
-        return {"Authorization": self._auth.header}
+        async with self._auth_lock:
+            if self._auth is None or self._auth.is_expired():
+                self._auth = await load_jwt()
+            return {"Authorization": self._auth.header}
 
     async def aclose(self) -> None:
         if self._session is not None:
@@ -148,16 +168,34 @@ class WebBackend(BackendDriver):
         session = await self._ensure_session()
         headers = {**_BROWSER_HEADERS, **(await self._auth_header())}
         body = _build_body(model, params)
-        resp = await session.post(
-            f"{self._base_url}{model.endpoint}",
-            json=body,
-            headers=headers,
-            cookies=self._cookies(),
-        )
+        self._breaker.check()
+        idem = new_idempotency_key()
+
+        async def _send() -> Any:
+            try:
+                return await session.post(
+                    f"{self._base_url}{model.endpoint}",
+                    json=body,
+                    headers={**headers, "X-Idempotency-Key": idem},
+                    cookies=self._cookies(),
+                )
+            except _TRANSPORT_ERRORS as exc:
+                raise NetworkError(str(exc)) from exc
+
+        async with self._sem:
+            try:
+                resp = await retrying_request(_send)
+            except Exception:
+                self._breaker.record_failure()
+                raise
+        if resp.status_code >= 500:
+            self._breaker.record_failure()
+        else:
+            self._breaker.record_success()
         data = self._json_or_raise(resp)
         job_id = _extract_job_id(data)
         if not job_id:
-            raise BackendError(
+            raise SchemaError(
                 f"Submit response missing job_id: {data!r}",
                 status_code=resp.status_code,
             )
@@ -166,12 +204,29 @@ class WebBackend(BackendDriver):
     async def status(self, handle: JobHandle) -> JobStatus:
         session = await self._ensure_session()
         headers = {**_BROWSER_HEADERS, **(await self._auth_header())}
-        resp = await session.get(
-            f"{self._base_url}/jobs",
-            params={"size": 100},
-            headers=headers,
-            cookies=self._cookies(),
-        )
+        self._breaker.check()
+
+        async def _send() -> Any:
+            try:
+                return await session.get(
+                    f"{self._base_url}/jobs",
+                    params={"size": 100},
+                    headers=headers,
+                    cookies=self._cookies(),
+                )
+            except _TRANSPORT_ERRORS as exc:
+                raise NetworkError(str(exc)) from exc
+
+        async with self._sem:
+            try:
+                resp = await retrying_request(_send, max_attempts=3)
+            except Exception:
+                self._breaker.record_failure()
+                raise
+        if resp.status_code >= 500:
+            self._breaker.record_failure()
+        else:
+            self._breaker.record_success()
         data = self._json_or_raise(resp)
         jobs = data.get("jobs") if isinstance(data, dict) else None
         job: dict[str, Any] | None = None
@@ -287,11 +342,8 @@ class WebBackend(BackendDriver):
     @staticmethod
     def _json_or_raise(resp: Any) -> dict[str, Any]:
         if resp.status_code >= 400:
-            raise BackendError(
-                f"HTTP {resp.status_code}: {resp.text[:500]}",
-                status_code=resp.status_code,
-                body=resp.text,
-            )
+            headers = dict(getattr(resp, "headers", {}) or {})
+            raise classify_http(resp.status_code, getattr(resp, "text", ""), headers)
         try:
             data: dict[str, Any] = resp.json()
         except ValueError as exc:

@@ -13,7 +13,7 @@ Strategy (most-preferred first):
 1. **Long-lived auth via __client** (recommended). User sets
    ``HIGGSFIELD_CLERK_CLIENT``; we hit ``GET /v1/client`` to discover the active
    session id, then ``POST /v1/client/sessions/{sid}/tokens`` to mint a fresh
-   JWT. We cache the JWT in memory until it's within 30s of expiry. The user
+   JWT. We cache the JWT in memory until it's within 10s of expiry. The user
    only needs to re-paste the cookie roughly weekly.
 2. **Manual JWT** (``HIGGSFIELD_JWT``). Single short-lived paste — useful for
    smoke tests but expires in ~4 minutes. Always wins if set, so it's a clean
@@ -53,7 +53,7 @@ class JWTAuth:
     def header(self) -> str:
         return f"Bearer {self.jwt}"
 
-    def is_expired(self, slack: int = 30) -> bool:
+    def is_expired(self, slack: int = 10) -> bool:
         if self.expires_at is None:
             return False
         return time.time() + slack >= self.expires_at

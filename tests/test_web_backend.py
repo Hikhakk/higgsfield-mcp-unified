@@ -8,6 +8,8 @@ the deterministic helpers that compose request bodies and parse responses.
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from higgsfield_mcp.auth.clerk import JWTAuth
@@ -110,3 +112,100 @@ def test_extract_video_url_from_results() -> None:
 def test_extract_video_url_from_video_dict() -> None:
     job = {"video": {"url": "https://cdn/v.webm"}}
     assert WebBackend._extract_video_url(job) == "https://cdn/v.webm"
+
+
+class FakeResp:
+    def __init__(
+        self, status_code: int, json_body: dict[str, Any], headers: dict[str, str] | None = None
+    ) -> None:
+        self.status_code = status_code
+        self._json = json_body
+        self.headers = headers or {}
+        self.text = str(json_body)
+
+    def json(self) -> dict[str, Any]:
+        return self._json
+
+
+class FakeSession:
+    """Stand-in for curl_cffi AsyncSession that returns a queued list of responses."""
+
+    def __init__(self, responses: list[FakeResp]) -> None:
+        self._responses = responses
+        self.posts: list[dict[str, Any]] = []
+        self.gets: list[dict[str, Any]] = []
+
+    async def post(self, url: str, **kwargs: Any) -> FakeResp:
+        self.posts.append({"url": url, **kwargs})
+        return self._responses.pop(0)
+
+    async def get(self, url: str, **kwargs: Any) -> FakeResp:
+        self.gets.append({"url": url, **kwargs})
+        return self._responses.pop(0)
+
+    async def close(self) -> None:
+        return None
+
+
+@pytest.mark.asyncio
+async def test_submit_retries_on_429_with_constant_idempotency_key(jwt_auth: JWTAuth) -> None:
+    spec = REGISTRY.get("seedance2")
+    session = FakeSession(
+        [
+            FakeResp(429, {}, {"retry-after": "0"}),
+            FakeResp(200, {"job_sets": [{"jobs": [{"id": "job-9"}]}]}),
+        ]
+    )
+    backend = WebBackend(auth=jwt_auth, session=session)
+    try:
+        handle = await backend.submit(spec, {"prompt": "p"})
+        assert handle.request_id == "job-9"
+        assert len(session.posts) == 2
+        keys = {p["headers"]["X-Idempotency-Key"] for p in session.posts}
+        assert len(keys) == 1
+    finally:
+        await backend.aclose()
+
+
+@pytest.mark.asyncio
+async def test_submit_401_raises_auth_error(jwt_auth: JWTAuth) -> None:
+    from higgsfield_mcp.errors import AuthError
+
+    spec = REGISTRY.get("seedance2")
+    session = FakeSession([FakeResp(401, {"detail": "Invalid credentials"})])
+    backend = WebBackend(auth=jwt_auth, session=session)
+    try:
+        with pytest.raises(AuthError):
+            await backend.submit(spec, {"prompt": "p"})
+    finally:
+        await backend.aclose()
+
+
+@pytest.mark.asyncio
+async def test_status_retries_on_429(jwt_auth: JWTAuth) -> None:
+    from higgsfield_mcp.backends.base import JobHandle
+
+    session = FakeSession(
+        [
+            FakeResp(429, {}, {"retry-after": "0"}),
+            FakeResp(
+                200,
+                {
+                    "jobs": [
+                        {
+                            "id": "r1",
+                            "status": "completed",
+                            "results": [{"url": "https://cdn/x.png"}],
+                        }
+                    ]
+                },
+            ),
+        ]
+    )
+    backend = WebBackend(auth=jwt_auth, session=session)
+    try:
+        status = await backend.status(JobHandle(backend="web", request_id="r1"))
+        assert status.state == "completed"
+        assert len(session.gets) == 2
+    finally:
+        await backend.aclose()
