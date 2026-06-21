@@ -289,6 +289,17 @@ class OfficialBackend(BackendDriver):
     async def list_motions(self) -> dict[str, Any]:
         return self._names_view(await self._v1_request("GET", "/v1/motions"))
 
+    async def speak(self, image_url: str, audio_url: str, prompt: str | None = None) -> JobHandle:
+        body: dict[str, Any] = {"input_image_url": image_url, "audio_url": audio_url}
+        if prompt:
+            body["prompt"] = prompt
+        raw = await self._v1_request("POST", "/v1/speak/higgsfield", json=body)
+        d = raw if isinstance(raw, dict) else {}
+        request_id = d.get("request_id") or d.get("id") or d.get("job_id")
+        if not request_id:
+            raise SchemaError(f"speak response missing request_id: {d!r}")
+        return JobHandle(backend="official", request_id=str(request_id))
+
     @staticmethod
     def _extract_image_urls(body: dict[str, Any]) -> list[str]:
         images = body.get("images") or []

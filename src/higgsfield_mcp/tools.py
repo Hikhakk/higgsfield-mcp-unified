@@ -92,6 +92,8 @@ async def generate_image(
     seed: int | None = None,
     batch_size: int | None = None,
     enhance_prompt: bool | None = None,
+    soul_id: str | None = None,
+    soul_strength: float | None = None,
 ) -> dict[str, Any]:
     """Submit an image-generation job. Returns a serialisable JobHandle string."""
     spec = _spec_for(model_id, expected_kind="image")
@@ -107,6 +109,8 @@ async def generate_image(
             "seed": seed,
             "batch_size": batch_size,
             "enhance_prompt": enhance_prompt,
+            "custom_reference_id": soul_id,
+            "custom_reference_strength": soul_strength,
         },
     )
     backend = pool.get(spec.backend)
@@ -336,3 +340,15 @@ async def list_motions(pool: BackendPool) -> dict[str, Any]:
     """List DOP motion presets by name."""
     backend = pool.get("official")
     return await backend.list_motions()  # type: ignore[attr-defined,no-any-return]
+
+
+async def generate_speech_video(
+    pool: BackendPool,
+    image_url: str,
+    audio_url: str,
+    prompt: str | None = None,
+) -> dict[str, Any]:
+    """Talking-head video from a face image + WAV audio (official backend). Audio must be WAV."""
+    backend = pool.get("official")
+    handle = await backend.speak(image_url, audio_url, prompt)  # type: ignore[attr-defined]
+    return {"job_handle": handle.serialise(), "model_id": "higgsfield/speak", "backend": "official"}

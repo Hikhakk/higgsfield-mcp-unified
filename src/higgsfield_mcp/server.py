@@ -31,6 +31,7 @@ from higgsfield_mcp.tools import (
     create_character,
     delete_character,
     generate_image,
+    generate_speech_video,
     generate_video,
     get_balance,
     get_character,
@@ -91,6 +92,8 @@ def build_server() -> FastMCP:
         seed: int | None = None,
         batch_size: int | None = None,
         enhance_prompt: bool | None = None,
+        soul_id: str | None = None,
+        soul_strength: float | None = None,
     ) -> SubmitResult:
         """Submit an image-generation request. Returns a job_handle to poll."""
         return SubmitResult.model_validate(
@@ -106,6 +109,8 @@ def build_server() -> FastMCP:
                 seed=seed,
                 batch_size=batch_size,
                 enhance_prompt=enhance_prompt,
+                soul_id=soul_id,
+                soul_strength=soul_strength,
             )
         )
 
@@ -242,6 +247,17 @@ def build_server() -> FastMCP:
     async def list_motions_tool() -> NameList:
         """List DOP motion presets for image-to-video."""
         return NameList.model_validate(await list_motions(pool))
+
+    @mcp.tool
+    async def generate_speech_video_tool(
+        image_url: str, audio_url: str, prompt: str | None = None
+    ) -> SubmitResult:
+        """Talking-head video from a face image + WAV audio (official backend)."""
+        return SubmitResult.model_validate(
+            await generate_speech_video(
+                pool, image_url=image_url, audio_url=audio_url, prompt=prompt
+            )
+        )
 
     return mcp
 
