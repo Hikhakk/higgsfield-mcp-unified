@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from fastmcp import FastMCP
 
 from higgsfield_mcp import __version__
@@ -12,8 +14,10 @@ from higgsfield_mcp.schemas import (
     JobStatusResult,
     ModelList,
     PreflightResult,
+    RecommendResult,
     SubmitResult,
     UploadResult,
+    ValidateResult,
 )
 from higgsfield_mcp.tools import (
     BackendPool,
@@ -23,8 +27,10 @@ from higgsfield_mcp.tools import (
     get_status,
     list_models,
     preflight_check,
+    recommend_model,
     subscribe,
     upload_image,
+    validate_params,
 )
 
 
@@ -157,6 +163,25 @@ def build_server() -> FastMCP:
     async def preflight_check_tool() -> PreflightResult:
         """Check auth + config for both backends before submitting a generation."""
         return PreflightResult.model_validate(await preflight_check(pool))
+
+    @mcp.tool
+    async def recommend_model_tool(
+        intent: str,
+        kind: Kind | None = None,
+        top: int = 5,
+        include_unverified: bool = False,
+    ) -> RecommendResult:
+        """Suggest models for a described goal. Ranks by keyword overlap; verified-only by default."""
+        return RecommendResult.model_validate(
+            await recommend_model(
+                intent=intent, kind=kind, top=top, include_unverified=include_unverified
+            )
+        )
+
+    @mcp.tool
+    async def validate_params_tool(model_id: str, params: dict[str, Any]) -> ValidateResult:
+        """Pre-flight check params against a model's supported set (no generation)."""
+        return ValidateResult.model_validate(await validate_params(model_id, params))
 
     return mcp
 

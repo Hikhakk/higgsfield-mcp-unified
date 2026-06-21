@@ -68,3 +68,26 @@ class WebHealth(BaseModel):
 class PreflightResult(BaseModel):
     official: OfficialHealth
     web: WebHealth
+
+
+class RecommendItem(BaseModel):
+    model_id: str
+    label: str
+    kind: str
+    backend: str
+    score: int
+    why: str
+
+
+class RecommendResult(BaseModel):
+    intent: str
+    recommendations: list[RecommendItem]
+
+
+class ValidateResult(BaseModel):
+    model_id: str
+    known_model: bool
+    valid: bool
+    unsupported: list[str]
+    supported: list[str]
+    constraints: list[str]

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import re
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -16,7 +17,7 @@ from typing import Any
 from higgsfield_mcp.backends.base import BackendDriver, JobHandle, JobStatus
 from higgsfield_mcp.backends.official import OfficialBackend
 from higgsfield_mcp.backends.web import WebBackend, assert_enabled
-from higgsfield_mcp.models import REGISTRY, Backend, Kind, ModelSpec
+from higgsfield_mcp.models import REGISTRY, Backend, Kind, ModelSpec, UnknownModelError
 
 
 class BackendPool:
@@ -235,3 +236,55 @@ async def preflight_check(pool: BackendPool) -> dict[str, Any]:
         web["error"] = str(exc)
 
     return {"official": official, "web": web}
+
+
+async def recommend_model(
+    intent: str,
+    kind: Kind | None = None,
+    top: int = 5,
+    include_unverified: bool = False,
+) -> dict[str, Any]:
+    """Rank registry models by keyword overlap with a natural-language intent."""
+    tokens = {t for t in re.findall(r"[a-z0-9]+", intent.lower()) if len(t) > 1}
+    scored: list[dict[str, Any]] = []
+    for spec in REGISTRY.list(kind=kind, include_unverified=include_unverified):
+        haystack = " ".join(
+            [spec.id, spec.label, " ".join(spec.constraints), spec.notes, spec.kind]
+        ).lower()
+        hits = sorted(t for t in tokens if t in haystack)
+        scored.append(
+            {
+                "model_id": spec.id,
+                "label": spec.label,
+                "kind": spec.kind,
+                "backend": spec.backend,
+                "score": len(hits),
+                "why": "matched: " + ", ".join(hits) if hits else "no keyword match",
+            }
+        )
+    scored.sort(key=lambda r: (-r["score"], r["model_id"]))
+    return {"intent": intent, "recommendations": scored[: max(0, top)]}
+
+
+async def validate_params(model_id: str, params: dict[str, Any]) -> dict[str, Any]:
+    """Check params against a model's supported set locally (no backend call)."""
+    try:
+        spec = REGISTRY.get(model_id)
+    except UnknownModelError:
+        return {
+            "model_id": model_id,
+            "known_model": False,
+            "valid": False,
+            "unsupported": sorted(params),
+            "supported": [],
+            "constraints": [],
+        }
+    unsupported = sorted(k for k in params if k not in spec.supports)
+    return {
+        "model_id": model_id,
+        "known_model": True,
+        "valid": not unsupported,
+        "unsupported": unsupported,
+        "supported": list(spec.supports),
+        "constraints": list(spec.constraints),
+    }
