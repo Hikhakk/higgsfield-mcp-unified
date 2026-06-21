@@ -128,3 +128,16 @@ class NameList(BaseModel):
     count: int
     names: list[str]
     raw: dict[str, Any] = {}
+
+
+class BatchItem(BaseModel):
+    ok: bool
+    model_id: str
+    backend: str | None = None
+    job_handle: str | None = None
+    error: str | None = None
+
+
+class BatchResult(BaseModel):
+    count: int
+    results: list[BatchItem]

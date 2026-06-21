@@ -8,9 +8,11 @@ from fastmcp import FastMCP
 
 from higgsfield_mcp import __version__
 from higgsfield_mcp.models import Backend, Kind
+from higgsfield_mcp.prompts import register_prompts
 from higgsfield_mcp.resources import register_resources
 from higgsfield_mcp.schemas import (
     Balance,
+    BatchResult,
     CancelResult,
     Character,
     CharacterDeleted,
@@ -30,6 +32,7 @@ from higgsfield_mcp.tools import (
     cancel_job,
     create_character,
     delete_character,
+    generate_batch,
     generate_image,
     generate_speech_video,
     generate_video,
@@ -61,6 +64,7 @@ def build_server() -> FastMCP:
     )
     pool = BackendPool()
     register_resources(mcp)
+    register_prompts(mcp)
 
     @mcp.tool
     async def list_models_tool(
@@ -258,6 +262,11 @@ def build_server() -> FastMCP:
                 pool, image_url=image_url, audio_url=audio_url, prompt=prompt
             )
         )
+
+    @mcp.tool
+    async def generate_batch_tool(requests: list[dict[str, Any]]) -> BatchResult:
+        """Submit multiple generations at once. Each request: {kind, model_id, prompt, ...params}."""
+        return BatchResult.model_validate(await generate_batch(pool, requests))
 
     return mcp
 

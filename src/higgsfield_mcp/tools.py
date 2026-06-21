@@ -352,3 +352,62 @@ async def generate_speech_video(
     backend = pool.get("official")
     handle = await backend.speak(image_url, audio_url, prompt)  # type: ignore[attr-defined]
     return {"job_handle": handle.serialise(), "model_id": "higgsfield/speak", "backend": "official"}
+
+
+async def generate_batch(pool: BackendPool, requests: list[dict[str, Any]]) -> dict[str, Any]:
+    """Submit multiple generations concurrently.
+
+    Each request is a dict: ``{"kind": "image"|"video", "model_id", "prompt", ...params}``.
+    Returns a per-item result with ``ok`` and either ``job_handle`` or ``error`` (one bad
+    item never fails the others).
+    """
+
+    async def _one(req: dict[str, Any]) -> dict[str, Any]:
+        model_id = req.get("model_id")
+        prompt = req.get("prompt")
+        if not model_id or not prompt:
+            return {
+                "ok": False,
+                "model_id": model_id or "",
+                "error": "each request needs 'model_id' and 'prompt'",
+            }
+        try:
+            if req.get("kind") == "video":
+                res = await generate_video(
+                    pool,
+                    model_id=model_id,
+                    prompt=prompt,
+                    image_url=req.get("image_url"),
+                    end_image_url=req.get("end_image_url"),
+                    duration=req.get("duration"),
+                    resolution=req.get("resolution"),
+                    sound=req.get("sound"),
+                    seed=req.get("seed"),
+                )
+            else:
+                res = await generate_image(
+                    pool,
+                    model_id=model_id,
+                    prompt=prompt,
+                    aspect_ratio=req.get("aspect_ratio"),
+                    resolution=req.get("resolution"),
+                    quality=req.get("quality"),
+                    image_url=req.get("image_url"),
+                    input_image_urls=req.get("input_image_urls"),
+                    seed=req.get("seed"),
+                    batch_size=req.get("batch_size"),
+                    enhance_prompt=req.get("enhance_prompt"),
+                    soul_id=req.get("soul_id"),
+                    soul_strength=req.get("soul_strength"),
+                )
+            return {
+                "ok": True,
+                "model_id": model_id,
+                "backend": res.get("backend"),
+                "job_handle": res.get("job_handle"),
+            }
+        except Exception as exc:
+            return {"ok": False, "model_id": model_id, "error": str(exc)}
+
+    results = await asyncio.gather(*[_one(r) for r in requests])
+    return {"count": len(results), "results": list(results)}

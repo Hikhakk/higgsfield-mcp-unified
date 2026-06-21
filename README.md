@@ -1,36 +1,47 @@
 # higgsfield-mcp-unified
 
-Unified Model Context Protocol (MCP) server for [Higgsfield AI](https://higgsfield.ai/). Combines two backends behind one server so any MCP client (Claude Desktop, Cursor, Claude Code, etc.) can drive any of **27 Higgsfield image and video models** — Sora 2, Veo 3, Kling 3.0, Seedance, Soul, DOP, Nano Banana, and more — through a single tool surface.
+Unified Model Context Protocol (MCP) server for [Higgsfield AI](https://higgsfield.ai/).
+It puts **43 Higgsfield image and video models** — Sora 2, Veo 3.x, Kling 3.0, Seedance 2.0, Wan, Soul, DOP, Nano Banana, FLUX, and more — plus Soul character training, account/history, and talking-head speech behind a single, typed tool surface for any MCP client (Claude Desktop, Claude Code, Cursor, …).
 
-> **Status: alpha (v0.1.0).** README is the source of truth for installable commands; rich docs live alongside the code in `docs/`.
+> **Status: alpha.** Local/self-hosted and not yet on PyPI — install from source (below). The cloud web backend is opt-in and experimental.
 
-## Why
+## Why this over the hosted MCP
 
-Higgsfield exposes two surfaces:
+The official hosted MCP (`mcp.higgsfield.ai`) is great but runs on Higgsfield's servers behind OAuth. This one is **local-first** and adds things a hosted server can't:
 
-- **Official REST API** (`platform.higgsfield.ai`) — stable, documented, key+secret auth, ~8 model IDs.
-- **Cloud web app** (`cloud.higgsfield.ai`) — ~19 modern slugs (Sora 2, Veo 3, Kling 3.0, Seedance 2.0, Wan 2.6, …) but only reachable via Clerk JWT auth, undocumented, may break without notice.
+- **Runs on your machine** — prompts and media go straight to Higgsfield, no intermediary proxy.
+- **Dual backend under one surface** — routes per model across the official REST API and the cloud web app.
+- **Typed structured output** — every tool returns a schema'd result (`outputSchema` + `structuredContent`), not an opaque blob.
+- **Discovery without burning a generation** — `recommend_model`, `validate_params`, `preflight_check`, and an MCP resource catalog.
+- **Reliability built in** — retries with backoff + jitter (honoring `Retry-After`), a circuit breaker, idempotency keys, and a structured error taxonomy.
+- **MCP prompt templates** — reusable cinematic/product scaffolds.
 
-Existing MCPs cover one side or the other. This server routes per-model to whichever backend supports it, so you never have to switch tools mid-conversation.
+## Backends
 
-## Install
+- **Official REST API** (`platform.higgsfield.ai`) — stable, `KEY:SECRET` auth. Default; rock-solid.
+- **Cloud web app** (`fnf.higgsfield.ai`) — the newest models, reachable only via a Clerk cookie. Opt-in and experimental (see warning below).
+
+## Install (from source)
+
+Not published to PyPI yet. Clone and run with [uv](https://docs.astral.sh/uv/):
 
 ```bash
-uvx higgsfield-mcp        # one-shot, recommended for client configs
-# or
-pipx install higgsfield-mcp-unified
+git clone https://github.com/Hikhakk/higgsfield-mcp-unified
+cd higgsfield-mcp-unified
+uv sync
+uv run higgsfield-mcp        # starts the stdio MCP server
 ```
 
 ## Configure
 
-Two environment variables are mandatory:
+The official backend needs two environment variables:
 
 ```bash
-export HIGGSFIELD_API_KEY=...        # from platform.higgsfield.ai dashboard
+export HIGGSFIELD_API_KEY=...        # from the platform.higgsfield.ai dashboard
 export HIGGSFIELD_SECRET=...
 ```
 
-To unlock Sora 2 / Veo 3 / Kling 3.0 / etc., opt in to the web backend:
+To unlock the cloud-only models (Sora 2 / Veo 3.x / Kling 3.0 / …), opt in to the web backend:
 
 ```bash
 export HIGGSFIELD_ENABLE_WEB_BACKEND=1
@@ -39,25 +50,18 @@ export HIGGSFIELD_CLERK_CLIENT=...   # __client cookie from cloud.higgsfield.ai 
 export HIGGSFIELD_JWT=...            # __session cookie (expires in ~1 minute)
 ```
 
+Run `preflight_check` from your client to confirm both backends are reachable before generating.
+
 > ## Web backend is experimental and will likely break
 >
-> Reading this carefully will save you hours of frustration.
+> The `cloud.higgsfield.ai` / `fnf.higgsfield.ai` surface is **not a public API** — it is the consumer web app's private backend, integrated by reverse-engineering. Expect:
 >
-> The cloud.higgsfield.ai / fnf.higgsfield.ai surface is **not a public API**.
-> It is the consumer web app's private backend.
-> Treating it as an API is unsupported by Higgsfield and the integration is held together by reverse-engineering.
+> - **Auth churn.** The Clerk JWT lives ~1 minute. The server refreshes it from a long-lived `__client` cookie, but Clerk rotates that cookie too (~7 days). When it rotates, paste a new one.
+> - **Bot protection.** `fnf.higgsfield.ai` sits behind Cloudflare's managed challenge (TLS fingerprinting). Browser-impersonating TLS (`curl_cffi`) clears it today, but it is brittle.
+> - **Schema drift.** Endpoint paths, body keys, and slugs are undocumented and change without notice. Several of the newest model endpoints in this server are marked `inferred` (best-guess, hidden by default) until verified against live traffic.
+> - **Probably against ToS.** Driving the consumer app programmatically is almost certainly unsupported. Review the terms before enabling it.
 >
-> Concretely you should expect:
->
-> - **Auth churn.** The Clerk JWT lives ~1 minute. The MCP refreshes it from a long-lived `__client` cookie, but Clerk also rotates that cookie on its own schedule (~7 days). When it rotates, every request fails until you paste a new one.
-> - **Bot protection.** `fnf.higgsfield.ai` sits behind both Cloudflare and Datadome. Browser-impersonating TLS (`curl_cffi`) clears the basic check, but the protections fingerprint request rate, body shape, header order, and TLS extension layout. After a few rapid requests from a non-residential IP you will be hard-blocked with a 403 Cloudflare "Attention Required" page until your IP cools off.
-> - **Schema drift.** The endpoint paths, body keys (e.g. `width`/`height`/`medias` vs `aspect_ratio`/`resolution`), and model slugs are not documented and change without notice. Some entries inherited from upstream (`seedance2`, `kling3`, `nano-banana-1`) appear stale next to the live consumer app, which uses underscored slugs (`seedance_2_0`, `kling3_0`, `imagegen_2_0`).
-> - **JWT audience matters.** Tokens minted on `cloud.higgsfield.ai` are scoped `azp=cloud.higgsfield.ai` and are rejected by `fnf.higgsfield.ai`. You need a token issued for `azp=higgsfield.ai`, which means logging in to the consumer app at `higgsfield.ai`, not the developer dashboard.
-> - **Probably against ToS.** Higgsfield publishes a paid official API at `platform.higgsfield.ai`. Driving the consumer web app programmatically is almost certainly not what they want you to do. Review the terms before turning this on.
->
-> Off by default.
-> Without `HIGGSFIELD_ENABLE_WEB_BACKEND=1`, only the official-API models are reachable, and that path is rock-solid.
-> If you need Sora 2 / Veo 3 / Kling 3.0 reliably, the supported route is the consumer subscription on higgsfield.ai or waiting for those models to appear on the official API.
+> Off by default. Without `HIGGSFIELD_ENABLE_WEB_BACKEND=1`, only the official-API models are reachable, and that path is solid.
 
 ### Claude Desktop
 
@@ -67,8 +71,8 @@ export HIGGSFIELD_JWT=...            # __session cookie (expires in ~1 minute)
 {
   "mcpServers": {
     "higgsfield": {
-      "command": "uvx",
-      "args": ["higgsfield-mcp"],
+      "command": "uv",
+      "args": ["run", "--directory", "/path/to/higgsfield-mcp-unified", "higgsfield-mcp"],
       "env": {
         "HIGGSFIELD_API_KEY": "...",
         "HIGGSFIELD_SECRET": "..."
@@ -78,58 +82,64 @@ export HIGGSFIELD_JWT=...            # __session cookie (expires in ~1 minute)
 }
 ```
 
-### Cursor / Claude Code / any stdio MCP client
-
-Same idea — point at the `higgsfield-mcp` binary and pass env vars.
-
-See `examples/` for working snippets.
+Cursor / Claude Code / any stdio MCP client: point at the same `uv run … higgsfield-mcp` command and pass env vars. See `examples/`.
 
 ## Tools
 
 | Tool | What it does |
 |---|---|
-| `list_models(kind?)` | Returns the full registry. Use this to discover `model_id` values. |
-| `generate_image(model_id, prompt, **params)` | Submits a text-to-image (or image-edit) job. |
-| `generate_video(model_id, prompt, image_url?, **params)` | Submits a text-to-video or image-to-video job. |
-| `generate_speech_video(model_id, ...)` | Talking-head route (official backend only). |
-| `get_status(request_id)` | Returns `queued` / `in_progress` / `completed` / `failed` / `nsfw` plus output URLs. |
-| `cancel_job(request_id)` | Cancels a pending request. |
-| `upload_image(path_or_bytes)` | Uploads a local file and returns a hosted URL for use as `image_url`. |
-| `subscribe(request_id)` | Long-polls until the job reaches a terminal state — convenience wrapper. |
+| `list_models(kind?, backend?, include_unverified?)` | The model registry. Inferred (unverified) models are hidden unless `include_unverified`. |
+| `recommend_model(intent, kind?, top?)` | Rank models for a described goal (local, no API call). |
+| `validate_params(model_id, params)` | Check params against a model's supported set before submitting. |
+| `preflight_check()` | Validate auth + reachability for both backends without spending a generation. |
+| `generate_image(model_id, prompt, …, soul_id?)` | Submit a text-to-image / image-edit job (supports Soul character refs). |
+| `generate_video(model_id, prompt, image_url?, …)` | Submit a text-to-video / image-to-video job. |
+| `generate_batch(requests[])` | Fan out multiple image/video submits concurrently. |
+| `generate_speech_video(image_url, audio_url, prompt?)` | Talking-head video from a face image + WAV audio. |
+| `get_status(job_handle)` / `subscribe(job_handle)` | Poll, or long-poll until terminal, with output URLs. |
+| `cancel_job(job_handle)` | Cancel a queued/in-progress job. |
+| `upload_image(path \| data_base64, backend?)` | Upload a local image and get a hosted URL. |
+| `create_character` / `get_character` / `list_characters` / `delete_character` | Train and manage reusable Soul characters. |
+| `list_soul_styles()` / `list_motions()` | Soul style and DOP motion presets, by name. |
+| `get_balance()` | Available credits + plan (official backend). |
+| `list_jobs(page?, page_size?)` | Recent generations (history). |
+
+## Resources & prompts
+
+- **Resources:** `higgsfield://models` (full catalog) and `higgsfield://models/{kind}` — subscribe to the catalog instead of repeatedly calling `list_models`.
+- **Prompts:** `cinematic_shot`, `product_360`, `animate_portrait`, `action_sequence`, `b_roll` — parameterized scaffolds to feed into the generation tools.
 
 ## Models
 
-Run `list_models()` for the live catalog. Highlights:
+Run `list_models()` (or read the `higgsfield://models` resource) for the live catalog. The registry carries a `confidence` tier:
 
-**Official backend** (`platform.higgsfield.ai`)
-- Image: `higgsfield-ai/soul/standard`, `reve/text-to-image`, `bytedance/seedream/v4/text-to-image`, `bytedance/seedream/v4/edit`
-- Video: `higgsfield-ai/dop/preview`, `higgsfield-ai/dop/standard`, `bytedance/seedance/v1/pro/image-to-video`, `kling-video/v2.1/pro/image-to-video`
+- **`verified`** — endpoint confirmed against SDK source / live probe (shown by default).
+- **`inferred`** — slug confirmed real but the endpoint is a best-guess pending live verification (hidden unless `include_unverified=true`, and noted as such).
 
-**Web backend** (`cloud.higgsfield.ai`, opt-in)
-- Image: `nano-banana-2`, `nano-banana-1`, `soul-v2`, `openai-hazel`
-- Video: `kling3`, `kling-o3-flf`, `kling2-6`, `kling2-5-turbo`, `kling`, `grok`, `wan2-6`, `wan2-5-video`, `seedance1-5`, `seedance`, `seedance2`, `seedance2-fast`, `veo3`, `sora2-video`, `image2video`
+Official backend (verified): Soul, Reve, Seedream v4 (text-to-image + edit), FLUX.1 Kontext Max, DOP (preview/standard), Seedance v1 Pro, Kling v2.1 Pro.
+Cloud backend: Kling 3.0 / O3 FLF, Seedance 2.0 / 1.5, Wan 2.6, Veo 3, Grok, Sora 2, Nano Banana, Soul v2, OpenAI Hazel, and newest-tier `inferred` entries (Veo 3.1, Wan 2.7, Kling 3.0 Turbo, Hailuo 02, FLUX.2, Z-Image, Cinematic Studio, …).
 
 ## Development
 
 ```bash
-git clone https://github.com/Hikhakk/higgsfield-mcp-unified
-cd higgsfield-mcp-unified
 uv sync --extra dev
-uv run pytest
-uv run ruff check .
-uv run mypy src
+uv run --extra dev pytest -q
+uv run --extra dev ruff check . && uv run --extra dev ruff format --check .
+uv run --extra dev mypy src
 ```
+
+Design specs and phased implementation plans live in `docs/superpowers/`.
 
 ## Contributing
 
-PRs welcome. See [CONTRIBUTING.md](CONTRIBUTING.md). All merges to `main` require code-owner approval (`@Hikhakk`) and green CI.
+PRs welcome. See [CONTRIBUTING.md](CONTRIBUTING.md). Merges to `main` require code-owner approval (`@Hikhakk`) and green CI.
 
 ## Credits
 
-Built on top of two earlier community efforts whose authors deserve credit even though this is a from-scratch rewrite:
+Built on two earlier community efforts:
 
 - [`geopopos/geo_higgsfield_ai_mcp`](https://github.com/geopopos/geo_higgsfield_ai_mcp) — first Python MCP for the official API.
-- [`jfikrat/higgsfield-mcp`](https://github.com/jfikrat/higgsfield-mcp) — first MCP to expose the cloud web models, source of the model registry.
+- [`jfikrat/higgsfield-mcp`](https://github.com/jfikrat/higgsfield-mcp) — first MCP to expose the cloud web models; source of the original model registry.
 
 ## License
 
