@@ -9,7 +9,13 @@ from higgsfield_mcp.tools import BackendPool, preflight_check
 
 @pytest.fixture(autouse=True)
 def _clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    for var in ("HIGGSFIELD_API_KEY", "HIGGSFIELD_SECRET", ENABLE_FLAG, "HIGGSFIELD_JWT", "HIGGSFIELD_CLERK_CLIENT"):
+    for var in (
+        "HIGGSFIELD_API_KEY",
+        "HIGGSFIELD_SECRET",
+        ENABLE_FLAG,
+        "HIGGSFIELD_JWT",
+        "HIGGSFIELD_CLERK_CLIENT",
+    ):
         monkeypatch.delenv(var, raising=False)
 
 

@@ -115,7 +115,9 @@ def test_extract_video_url_from_video_dict() -> None:
 
 
 class FakeResp:
-    def __init__(self, status_code: int, json_body: dict[str, Any], headers: dict[str, str] | None = None) -> None:
+    def __init__(
+        self, status_code: int, json_body: dict[str, Any], headers: dict[str, str] | None = None
+    ) -> None:
         self.status_code = status_code
         self._json = json_body
         self.headers = headers or {}
@@ -188,7 +190,15 @@ async def test_status_retries_on_429(jwt_auth: JWTAuth) -> None:
             FakeResp(429, {}, {"retry-after": "0"}),
             FakeResp(
                 200,
-                {"jobs": [{"id": "r1", "status": "completed", "results": [{"url": "https://cdn/x.png"}]}]},
+                {
+                    "jobs": [
+                        {
+                            "id": "r1",
+                            "status": "completed",
+                            "results": [{"url": "https://cdn/x.png"}],
+                        }
+                    ]
+                },
             ),
         ]
     )

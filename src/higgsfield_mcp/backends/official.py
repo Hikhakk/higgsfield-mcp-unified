@@ -133,9 +133,7 @@ class OfficialBackend(BackendDriver):
             )
 
     async def upload(self, data: bytes, mime: str) -> str:
-        resp = await self._client.post(
-            "/files/generate-upload-url", json={"content_type": mime}
-        )
+        resp = await self._client.post("/files/generate-upload-url", json={"content_type": mime})
         body = self._json_or_raise(resp)
         upload_url = body.get("upload_url")
         public_url = body.get("public_url") or body.get("url")
