@@ -207,3 +207,31 @@ def _status_dict(handle: JobHandle, status: JobStatus) -> dict[str, Any]:
         "video_url": status.video_url,
         "error": status.error,
     }
+
+
+async def preflight_check(pool: BackendPool) -> dict[str, Any]:
+    """Validate credentials/reachability for both backends without spending a generation."""
+    from higgsfield_mcp.auth.api_key import MissingCredentialsError, load_from_env
+    from higgsfield_mcp.auth.clerk import MissingJWTError, load_jwt
+    from higgsfield_mcp.backends.web import WebBackendDisabledError, assert_enabled
+
+    official: dict[str, Any] = {"configured": False, "ok": False, "error": None}
+    try:
+        load_from_env()
+        official.update(configured=True, ok=True)
+    except MissingCredentialsError as exc:
+        official["error"] = str(exc)
+
+    web: dict[str, Any] = {"enabled": False, "ok": False, "error": None}
+    try:
+        assert_enabled()
+        web["enabled"] = True
+        try:
+            await load_jwt()
+            web["ok"] = True
+        except MissingJWTError as exc:
+            web["error"] = str(exc)
+    except WebBackendDisabledError as exc:
+        web["error"] = str(exc)
+
+    return {"official": official, "web": web}
