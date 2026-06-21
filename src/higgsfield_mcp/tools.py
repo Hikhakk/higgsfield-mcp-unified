@@ -288,3 +288,27 @@ async def validate_params(model_id: str, params: dict[str, Any]) -> dict[str, An
         "supported": list(spec.supports),
         "constraints": list(spec.constraints),
     }
+
+
+async def create_character(pool: BackendPool, name: str, image_urls: list[str]) -> dict[str, Any]:
+    """Train a reusable Soul character from reference image URLs (official backend)."""
+    backend = pool.get("official")
+    return await backend.create_character(name, image_urls)  # type: ignore[attr-defined,no-any-return]
+
+
+async def get_character(pool: BackendPool, character_id: str) -> dict[str, Any]:
+    """Poll a Soul character's training status."""
+    backend = pool.get("official")
+    return await backend.get_character(character_id)  # type: ignore[attr-defined,no-any-return]
+
+
+async def list_characters(pool: BackendPool, page: int = 1, page_size: int = 50) -> dict[str, Any]:
+    """List trained Soul characters."""
+    backend = pool.get("official")
+    return await backend.list_characters(page, page_size)  # type: ignore[attr-defined,no-any-return]
+
+
+async def delete_character(pool: BackendPool, character_id: str) -> dict[str, Any]:
+    """Delete a trained Soul character."""
+    backend = pool.get("official")
+    return await backend.delete_character(character_id)  # type: ignore[attr-defined,no-any-return]

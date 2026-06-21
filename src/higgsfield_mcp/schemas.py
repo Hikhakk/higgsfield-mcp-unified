@@ -7,6 +7,8 @@ dicts; the ``server.py`` wrappers validate those dicts into these models.
 
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel
 
 
@@ -91,3 +93,21 @@ class ValidateResult(BaseModel):
     unsupported: list[str]
     supported: list[str]
     constraints: list[str]
+
+
+class Character(BaseModel):
+    id: str
+    name: str
+    status: str
+    image_count: int
+    raw: dict[str, Any] = {}
+
+
+class CharacterList(BaseModel):
+    count: int
+    characters: list[Character]
+
+
+class CharacterDeleted(BaseModel):
+    deleted: bool
+    character_id: str

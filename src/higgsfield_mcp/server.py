@@ -11,6 +11,9 @@ from higgsfield_mcp.models import Backend, Kind
 from higgsfield_mcp.resources import register_resources
 from higgsfield_mcp.schemas import (
     CancelResult,
+    Character,
+    CharacterDeleted,
+    CharacterList,
     JobStatusResult,
     ModelList,
     PreflightResult,
@@ -22,9 +25,13 @@ from higgsfield_mcp.schemas import (
 from higgsfield_mcp.tools import (
     BackendPool,
     cancel_job,
+    create_character,
+    delete_character,
     generate_image,
     generate_video,
+    get_character,
     get_status,
+    list_characters,
     list_models,
     preflight_check,
     recommend_model,
@@ -182,6 +189,32 @@ def build_server() -> FastMCP:
     async def validate_params_tool(model_id: str, params: dict[str, Any]) -> ValidateResult:
         """Pre-flight check params against a model's supported set (no generation)."""
         return ValidateResult.model_validate(await validate_params(model_id, params))
+
+    @mcp.tool
+    async def create_character_tool(name: str, image_urls: list[str]) -> Character:
+        """Train a reusable Soul character from reference images. Results best-effort until verified."""
+        return Character.model_validate(
+            await create_character(pool, name=name, image_urls=image_urls)
+        )
+
+    @mcp.tool
+    async def get_character_tool(character_id: str) -> Character:
+        """Check a Soul character's training status."""
+        return Character.model_validate(await get_character(pool, character_id=character_id))
+
+    @mcp.tool
+    async def list_characters_tool(page: int = 1, page_size: int = 50) -> CharacterList:
+        """List trained Soul characters."""
+        return CharacterList.model_validate(
+            await list_characters(pool, page=page, page_size=page_size)
+        )
+
+    @mcp.tool
+    async def delete_character_tool(character_id: str) -> CharacterDeleted:
+        """Delete a trained Soul character."""
+        return CharacterDeleted.model_validate(
+            await delete_character(pool, character_id=character_id)
+        )
 
     return mcp
 

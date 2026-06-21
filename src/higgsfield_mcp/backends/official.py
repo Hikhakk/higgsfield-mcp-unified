@@ -195,6 +195,51 @@ class OfficialBackend(BackendDriver):
             raise BackendError(f"Invalid JSON response: {resp.text[:200]}") from exc
 
     @staticmethod
+    def _character_view(raw: dict[str, Any]) -> dict[str, Any]:
+        images = raw.get("image_urls") or raw.get("images") or raw.get("medias") or []
+        return {
+            "id": raw.get("id") or raw.get("custom_reference_id") or raw.get("soul_id") or "",
+            "name": raw.get("name") or raw.get("title") or "",
+            "status": str(raw.get("status") or raw.get("state") or "unknown"),
+            "image_count": len(images) if isinstance(images, list) else 0,
+            "raw": raw,
+        }
+
+    async def create_character(self, name: str, image_urls: list[str]) -> dict[str, Any]:
+        body = self._v1_payload_create(name, image_urls)
+        raw = await self._v1_request("POST", "/v1/custom-references", json=body)
+        return self._character_view(raw if isinstance(raw, dict) else {"raw": raw})
+
+    @staticmethod
+    def _v1_payload_create(name: str, image_urls: list[str]) -> dict[str, Any]:
+        # Request shape is a best guess (CLI says 5-20 training images).
+        return {"name": name, "image_urls": list(image_urls)}
+
+    async def get_character(self, character_id: str) -> dict[str, Any]:
+        raw = await self._v1_request("GET", f"/v1/custom-references/{character_id}")
+        return self._character_view(raw if isinstance(raw, dict) else {"raw": raw})
+
+    async def list_characters(self, page: int = 1, page_size: int = 50) -> dict[str, Any]:
+        raw = await self._v1_request(
+            "GET", f"/v1/custom-references/list?page={page}&page_size={page_size}"
+        )
+        items: list[Any] = []
+        if isinstance(raw, dict):
+            for key in ("items", "results", "custom_references", "data"):
+                v = raw.get(key)
+                if isinstance(v, list):
+                    items = v
+                    break
+        elif isinstance(raw, list):
+            items = raw
+        chars = [self._character_view(i) for i in items if isinstance(i, dict)]
+        return {"count": len(chars), "characters": chars}
+
+    async def delete_character(self, character_id: str) -> dict[str, Any]:
+        await self._v1_request("DELETE", f"/v1/custom-references/{character_id}")
+        return {"deleted": True, "character_id": character_id}
+
+    @staticmethod
     def _extract_image_urls(body: dict[str, Any]) -> list[str]:
         images = body.get("images") or []
         out: list[str] = []
