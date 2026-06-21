@@ -18,7 +18,7 @@ class ModelInfo(BaseModel):
     endpoint: str
     supports: list[str]
     constraints: list[str] = []
-    pending_verification: bool = False
+    confidence: str = "verified"
     notes: str = ""
 
 

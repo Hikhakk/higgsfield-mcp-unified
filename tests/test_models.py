@@ -30,9 +30,9 @@ def test_split_by_kind() -> None:
     assert len(videos) == 19
 
 
-def test_unverified_hidden_by_default() -> None:
-    assert any(s.pending_verification for s in REGISTRY.by_id.values())
-    assert all(not s.pending_verification for s in REGISTRY.list())
+def test_inferred_hidden_by_default() -> None:
+    assert any(s.confidence == "inferred" for s in REGISTRY.by_id.values())
+    assert all(s.confidence == "verified" for s in REGISTRY.list())
 
 
 def test_known_model_lookup() -> None:

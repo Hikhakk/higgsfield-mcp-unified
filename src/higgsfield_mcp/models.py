@@ -26,6 +26,7 @@ from typing import Literal
 
 Backend = Literal["official", "web"]
 Kind = Literal["image", "video", "speech"]
+Confidence = Literal["verified", "inferred"]
 
 
 @dataclass(frozen=True)
@@ -37,7 +38,7 @@ class ModelSpec:
     endpoint: str
     supports: tuple[str, ...]
     constraints: tuple[str, ...] = ()
-    pending_verification: bool = False
+    confidence: Confidence = "verified"
     notes: str = ""
 
 
@@ -156,7 +157,7 @@ _WEB_IMAGE: tuple[ModelSpec, ...] = (
             "input_image_urls",
         ),
         constraints=("resolution: 1k | 2k | 4k", "input_image_urls: up to 16 references"),
-        pending_verification=True,
+        confidence="inferred",
         notes="Endpoint inherited from upstream and may be wrong; tracked in issue tracker.",
     ),
     ModelSpec(
@@ -328,7 +329,7 @@ class Registry:
                 continue
             if backend and spec.backend != backend:
                 continue
-            if spec.pending_verification and not include_unverified:
+            if spec.confidence == "inferred" and not include_unverified:
                 continue
             out.append(spec)
         return out

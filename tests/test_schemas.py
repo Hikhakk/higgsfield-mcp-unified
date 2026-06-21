@@ -20,7 +20,7 @@ def test_modellist_validates_registry_dict() -> None:
                 "endpoint": "higgsfield-ai/soul/standard",
                 "supports": ("prompt", "aspect_ratio"),  # tuple coerces to list
                 "constraints": (),
-                "pending_verification": False,
+                "confidence": "verified",
                 "notes": "",
             }
         ],
