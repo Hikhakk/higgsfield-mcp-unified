@@ -26,6 +26,7 @@ from typing import Literal
 
 Backend = Literal["official", "web"]
 Kind = Literal["image", "video", "speech"]
+Confidence = Literal["verified", "inferred"]
 
 
 @dataclass(frozen=True)
@@ -37,7 +38,7 @@ class ModelSpec:
     endpoint: str
     supports: tuple[str, ...]
     constraints: tuple[str, ...] = ()
-    pending_verification: bool = False
+    confidence: Confidence = "verified"
     notes: str = ""
 
 
@@ -112,6 +113,15 @@ _OFFICIAL: tuple[ModelSpec, ...] = (
         endpoint="kling-video/v2.1/pro/image-to-video",
         supports=("prompt", "image_url", "duration"),
     ),
+    ModelSpec(
+        id="flux-pro/kontext/max/text-to-image",
+        label="FLUX.1 Kontext Max — text-to-image",
+        kind="image",
+        backend="official",
+        endpoint="flux-pro/kontext/max/text-to-image",
+        supports=("prompt", "aspect_ratio", "seed"),
+        constraints=("safety_tolerance: 0-6",),
+    ),
 )
 
 # ---------------------------------------------------------------------------
@@ -156,7 +166,7 @@ _WEB_IMAGE: tuple[ModelSpec, ...] = (
             "input_image_urls",
         ),
         constraints=("resolution: 1k | 2k | 4k", "input_image_urls: up to 16 references"),
-        pending_verification=True,
+        confidence="inferred",
         notes="Endpoint inherited from upstream and may be wrong; tracked in issue tracker.",
     ),
     ModelSpec(
@@ -176,6 +186,88 @@ _WEB_IMAGE: tuple[ModelSpec, ...] = (
         endpoint="/jobs/openai-hazel",
         supports=("prompt", "aspect_ratio", "batch_size", "quality"),
         constraints=("quality: low | medium | high | 4k",),
+    ),
+    ModelSpec(
+        id="flux_2",
+        label="FLUX.2",
+        kind="image",
+        backend="web",
+        endpoint="/jobs/flux-2",
+        supports=("prompt", "aspect_ratio", "resolution", "seed"),
+        constraints=("resolution: 1k | 2k", "model: pro | flex | max"),
+        confidence="inferred",
+        notes="endpoint unverified — confirm with live auth",
+    ),
+    ModelSpec(
+        id="z_image",
+        label="Z-Image",
+        kind="image",
+        backend="web",
+        endpoint="/jobs/z-image",
+        supports=("prompt", "aspect_ratio"),
+        confidence="inferred",
+        notes="endpoint unverified — confirm with live auth",
+    ),
+    ModelSpec(
+        id="recraft_v4_1",
+        label="Recraft v4.1",
+        kind="image",
+        backend="web",
+        endpoint="/jobs/v2/recraft_v4_1",
+        supports=("prompt", "aspect_ratio", "resolution"),
+        confidence="inferred",
+        notes="endpoint unverified — confirm with live auth",
+    ),
+    ModelSpec(
+        id="soul_cinematic",
+        label="Soul Cinematic",
+        kind="image",
+        backend="web",
+        endpoint="/jobs/v2/soul_cinematic",
+        supports=("prompt", "aspect_ratio", "input_image_urls"),
+        confidence="inferred",
+        notes="endpoint unverified — confirm with live auth",
+    ),
+    ModelSpec(
+        id="soul_location",
+        label="Soul Location",
+        kind="image",
+        backend="web",
+        endpoint="/jobs/v2/soul_location",
+        supports=("prompt", "aspect_ratio"),
+        confidence="inferred",
+        notes="endpoint unverified — confirm with live auth",
+    ),
+    ModelSpec(
+        id="grok_image",
+        label="Grok Image",
+        kind="image",
+        backend="web",
+        endpoint="/jobs/v2/grok_image",
+        supports=("prompt", "aspect_ratio", "input_image_urls"),
+        confidence="inferred",
+        notes="endpoint unverified — confirm with live auth",
+    ),
+    ModelSpec(
+        id="kling_omni_image",
+        label="Kling O1 Image",
+        kind="image",
+        backend="web",
+        endpoint="/jobs/v2/kling_omni_image",
+        supports=("prompt", "aspect_ratio", "resolution", "input_image_urls"),
+        confidence="inferred",
+        notes="endpoint unverified — confirm with live auth",
+    ),
+    ModelSpec(
+        id="cinematic_studio_2_5",
+        label="Cinematic Studio 2.5",
+        kind="image",
+        backend="web",
+        endpoint="/jobs/v2/cinematic_studio_2_5",
+        supports=("prompt", "aspect_ratio", "resolution"),
+        constraints=("resolution: 1k | 2k | 4k",),
+        confidence="inferred",
+        notes="endpoint unverified — confirm with live auth",
     ),
 )
 
@@ -303,6 +395,82 @@ _WEB_VIDEO: tuple[ModelSpec, ...] = (
         endpoint="/jobs/image2video",
         supports=("prompt", "image_url", "duration"),
     ),
+    ModelSpec(
+        id="veo3_1",
+        label="Veo 3.1",
+        kind="video",
+        backend="web",
+        endpoint="/jobs/veo3_1",
+        supports=("prompt", "image_url", "aspect_ratio", "duration"),
+        constraints=("duration: 4 | 6 | 8", "aspect_ratio: 16:9 | 9:16"),
+        confidence="inferred",
+        notes="endpoint unverified — confirm with live auth",
+    ),
+    ModelSpec(
+        id="veo3_1_lite",
+        label="Veo 3.1 Lite",
+        kind="video",
+        backend="web",
+        endpoint="/jobs/veo3_1_lite",
+        supports=("prompt", "aspect_ratio", "duration"),
+        constraints=("duration: 4 | 6 | 8",),
+        confidence="inferred",
+        notes="endpoint unverified — confirm with live auth",
+    ),
+    ModelSpec(
+        id="wan2_7",
+        label="Wan 2.7",
+        kind="video",
+        backend="web",
+        endpoint="/jobs/v2/wan2_7",
+        supports=("prompt", "image_url", "duration", "resolution"),
+        confidence="inferred",
+        notes="endpoint unverified — confirm with live auth",
+    ),
+    ModelSpec(
+        id="kling3_0_turbo",
+        label="Kling 3.0 Turbo",
+        kind="video",
+        backend="web",
+        endpoint="/jobs/v2/kling3_0_turbo",
+        supports=("prompt", "image_url", "duration", "resolution"),
+        constraints=("duration: 3-15", "resolution: 720p | 1080p"),
+        confidence="inferred",
+        notes="endpoint unverified — confirm with live auth",
+    ),
+    ModelSpec(
+        id="minimax_hailuo",
+        label="MiniMax Hailuo 02",
+        kind="video",
+        backend="web",
+        endpoint="/jobs/v2/minimax_hailuo",
+        supports=("prompt", "duration", "resolution"),
+        constraints=("duration: 6 | 10", "resolution: 512 | 768 | 1080"),
+        confidence="inferred",
+        notes="endpoint unverified — confirm with live auth",
+    ),
+    ModelSpec(
+        id="grok_video_v15",
+        label="Grok Video 1.5",
+        kind="video",
+        backend="web",
+        endpoint="/jobs/v2/grok_video_v15",
+        supports=("prompt", "image_url", "duration", "resolution"),
+        constraints=("duration: 2-15", "resolution: 480p | 720p"),
+        confidence="inferred",
+        notes="endpoint unverified — confirm with live auth",
+    ),
+    ModelSpec(
+        id="cinematic_studio_3_0",
+        label="Cinematic Studio 3.0",
+        kind="video",
+        backend="web",
+        endpoint="/jobs/v2/cinematic_studio_3_0",
+        supports=("prompt", "aspect_ratio", "duration"),
+        constraints=("duration: 4-15",),
+        confidence="inferred",
+        notes="endpoint unverified — confirm with live auth",
+    ),
 )
 
 
@@ -328,7 +496,7 @@ class Registry:
                 continue
             if backend and spec.backend != backend:
                 continue
-            if spec.pending_verification and not include_unverified:
+            if spec.confidence == "inferred" and not include_unverified:
                 continue
             out.append(spec)
         return out
