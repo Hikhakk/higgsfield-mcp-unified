@@ -219,7 +219,7 @@ class WebBackend(BackendDriver):
 
         async with self._sem:
             try:
-                resp = await retrying_request(_send)
+                resp = await retrying_request(_send, max_attempts=3)
             except Exception:
                 self._breaker.record_failure()
                 raise

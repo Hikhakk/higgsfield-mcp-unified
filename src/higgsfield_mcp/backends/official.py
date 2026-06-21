@@ -101,7 +101,7 @@ class OfficialBackend(BackendDriver):
                 raise NetworkError(str(exc)) from exc
 
         try:
-            resp = cast(httpx.Response, await retrying_request(_send))
+            resp = cast(httpx.Response, await retrying_request(_send, max_attempts=3))
         except Exception:
             self._breaker.record_failure()
             raise
