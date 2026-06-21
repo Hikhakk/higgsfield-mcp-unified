@@ -9,6 +9,7 @@ import respx
 from higgsfield_mcp.auth.api_key import ApiKeyAuth
 from higgsfield_mcp.backends.base import BackendError, JobHandle
 from higgsfield_mcp.backends.official import BASE_URL, OfficialBackend
+from higgsfield_mcp.errors import AuthError
 from higgsfield_mcp.models import REGISTRY
 
 
@@ -118,6 +119,60 @@ async def test_refuses_web_model(auth: ApiKeyAuth) -> None:
     try:
         with pytest.raises(BackendError, match="cannot submit web model"):
             await backend.submit(spec, {})
+    finally:
+        await backend.aclose()
+
+
+@pytest.mark.asyncio
+async def test_401_raises_auth_error(auth: ApiKeyAuth) -> None:
+    spec = REGISTRY.get("higgsfield-ai/soul/standard")
+    backend = OfficialBackend(auth=auth)
+    try:
+        with respx.mock(base_url=BASE_URL) as mock:
+            mock.post(f"/{spec.endpoint}").mock(return_value=httpx.Response(401, text="bad"))
+            with pytest.raises(AuthError):
+                await backend.submit(spec, {"prompt": "p"})
+    finally:
+        await backend.aclose()
+
+
+@pytest.mark.asyncio
+async def test_429_retries_with_constant_idempotency_key(auth: ApiKeyAuth) -> None:
+    spec = REGISTRY.get("higgsfield-ai/soul/standard")
+    backend = OfficialBackend(auth=auth)
+    try:
+        with respx.mock(base_url=BASE_URL) as mock:
+            route = mock.post(f"/{spec.endpoint}").mock(
+                side_effect=[
+                    httpx.Response(429, headers={"retry-after": "0"}),
+                    httpx.Response(200, json={"request_id": "ok-1"}),
+                ]
+            )
+            handle = await backend.submit(spec, {"prompt": "p"})
+        assert handle.request_id == "ok-1"
+        assert route.call_count == 2
+        # the idempotency key is generated once and reused across retries
+        keys = {c.request.headers["x-idempotency-key"] for c in route.calls}
+        assert len(keys) == 1
+    finally:
+        await backend.aclose()
+
+
+@pytest.mark.asyncio
+async def test_transport_error_retries_then_succeeds(auth: ApiKeyAuth) -> None:
+    spec = REGISTRY.get("higgsfield-ai/soul/standard")
+    backend = OfficialBackend(auth=auth)
+    try:
+        with respx.mock(base_url=BASE_URL) as mock:
+            route = mock.post(f"/{spec.endpoint}").mock(
+                side_effect=[
+                    httpx.ConnectError("boom"),
+                    httpx.Response(200, json={"request_id": "ok-2"}),
+                ]
+            )
+            handle = await backend.submit(spec, {"prompt": "p"})
+        assert handle.request_id == "ok-2"
+        assert route.call_count == 2
     finally:
         await backend.aclose()
 

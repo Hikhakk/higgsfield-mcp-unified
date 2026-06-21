@@ -11,13 +11,15 @@ Auth is a single header: ``Authorization: Key {api_key}:{secret}``.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 import httpx
 
 from higgsfield_mcp.auth.api_key import ApiKeyAuth, load_from_env
+from higgsfield_mcp.errors import NetworkError, SchemaError, classify_http
 from higgsfield_mcp.models import Backend as BackendName
 from higgsfield_mcp.models import ModelSpec
+from higgsfield_mcp.reliability import CircuitBreaker, new_idempotency_key, retrying_request
 
 from .base import BackendDriver, BackendError, JobHandle, JobState, JobStatus
 
@@ -52,6 +54,7 @@ class OfficialBackend(BackendDriver):
             },
             timeout=httpx.Timeout(30.0, connect=10.0),
         )
+        self._breaker = CircuitBreaker()
 
     async def aclose(self) -> None:
         await self._client.aclose()
@@ -59,18 +62,53 @@ class OfficialBackend(BackendDriver):
     async def submit(self, model: ModelSpec, params: dict[str, Any]) -> JobHandle:
         if model.backend != "official":
             raise BackendError(f"OfficialBackend cannot submit web model {model.id!r}")
-        resp = await self._client.post(f"/{model.endpoint}", json=params)
+        self._breaker.check()
+        idem = new_idempotency_key()
+
+        async def _send() -> httpx.Response:
+            try:
+                return await self._client.post(
+                    f"/{model.endpoint}", json=params, headers={"X-Idempotency-Key": idem}
+                )
+            except httpx.HTTPError as exc:
+                raise NetworkError(str(exc)) from exc
+
+        try:
+            resp = cast(httpx.Response, await retrying_request(_send))
+        except Exception:
+            self._breaker.record_failure()
+            raise
+        if resp.status_code >= 500:
+            self._breaker.record_failure()
+        else:
+            self._breaker.record_success()
         body = self._json_or_raise(resp)
         request_id = body.get("request_id") or body.get("id")
         if not request_id:
-            raise BackendError(
+            raise SchemaError(
                 f"Submit response missing request_id: {body!r}",
                 status_code=resp.status_code,
             )
         return JobHandle(backend="official", request_id=request_id)
 
     async def status(self, handle: JobHandle) -> JobStatus:
-        resp = await self._client.get(f"/requests/{handle.request_id}/status")
+        self._breaker.check()
+
+        async def _send() -> httpx.Response:
+            try:
+                return await self._client.get(f"/requests/{handle.request_id}/status")
+            except httpx.HTTPError as exc:
+                raise NetworkError(str(exc)) from exc
+
+        try:
+            resp = cast(httpx.Response, await retrying_request(_send))
+        except Exception:
+            self._breaker.record_failure()
+            raise
+        if resp.status_code >= 500:
+            self._breaker.record_failure()
+        else:
+            self._breaker.record_success()
         body = self._json_or_raise(resp)
         raw_state = str(body.get("status", "")).lower()
         state = _STATE_MAP.get(raw_state, "in_progress")
@@ -142,11 +180,7 @@ class OfficialBackend(BackendDriver):
     @staticmethod
     def _json_or_raise(resp: httpx.Response) -> dict[str, Any]:
         if resp.status_code >= 400:
-            raise BackendError(
-                f"HTTP {resp.status_code}: {resp.text[:300]}",
-                status_code=resp.status_code,
-                body=resp.text,
-            )
+            raise classify_http(resp.status_code, resp.text, dict(resp.headers))
         try:
             data: dict[str, Any] = resp.json()
         except ValueError as exc:
