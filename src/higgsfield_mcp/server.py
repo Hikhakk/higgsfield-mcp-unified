@@ -10,12 +10,15 @@ from higgsfield_mcp import __version__
 from higgsfield_mcp.models import Backend, Kind
 from higgsfield_mcp.resources import register_resources
 from higgsfield_mcp.schemas import (
+    Balance,
     CancelResult,
     Character,
     CharacterDeleted,
     CharacterList,
+    JobList,
     JobStatusResult,
     ModelList,
+    NameList,
     PreflightResult,
     RecommendResult,
     SubmitResult,
@@ -29,10 +32,14 @@ from higgsfield_mcp.tools import (
     delete_character,
     generate_image,
     generate_video,
+    get_balance,
     get_character,
     get_status,
     list_characters,
+    list_jobs,
     list_models,
+    list_motions,
+    list_soul_styles,
     preflight_check,
     recommend_model,
     subscribe,
@@ -215,6 +222,26 @@ def build_server() -> FastMCP:
         return CharacterDeleted.model_validate(
             await delete_character(pool, character_id=character_id)
         )
+
+    @mcp.tool
+    async def get_balance_tool() -> Balance:
+        """Get available credits + plan (best-effort; official API key required)."""
+        return Balance.model_validate(await get_balance(pool))
+
+    @mcp.tool
+    async def list_jobs_tool(page: int = 1, page_size: int = 20) -> JobList:
+        """List recent generations (history) from the official backend."""
+        return JobList.model_validate(await list_jobs(pool, page=page, page_size=page_size))
+
+    @mcp.tool
+    async def list_soul_styles_tool() -> NameList:
+        """List Soul image style presets to pick by name."""
+        return NameList.model_validate(await list_soul_styles(pool))
+
+    @mcp.tool
+    async def list_motions_tool() -> NameList:
+        """List DOP motion presets for image-to-video."""
+        return NameList.model_validate(await list_motions(pool))
 
     return mcp
 

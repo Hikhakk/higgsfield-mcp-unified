@@ -312,3 +312,27 @@ async def delete_character(pool: BackendPool, character_id: str) -> dict[str, An
     """Delete a trained Soul character."""
     backend = pool.get("official")
     return await backend.delete_character(character_id)  # type: ignore[attr-defined,no-any-return]
+
+
+async def get_balance(pool: BackendPool) -> dict[str, Any]:
+    """Best-effort credit balance + plan (official backend; response shape unverified)."""
+    backend = pool.get("official")
+    return await backend.get_balance()  # type: ignore[attr-defined,no-any-return]
+
+
+async def list_jobs(pool: BackendPool, page: int = 1, page_size: int = 20) -> dict[str, Any]:
+    """List recent generations from the official backend (history)."""
+    backend = pool.get("official")
+    return await backend.list_jobs_official(page, page_size)  # type: ignore[attr-defined,no-any-return]
+
+
+async def list_soul_styles(pool: BackendPool) -> dict[str, Any]:
+    """List Soul image style presets by name."""
+    backend = pool.get("official")
+    return await backend.list_soul_styles()  # type: ignore[attr-defined,no-any-return]
+
+
+async def list_motions(pool: BackendPool) -> dict[str, Any]:
+    """List DOP motion presets by name."""
+    backend = pool.get("official")
+    return await backend.list_motions()  # type: ignore[attr-defined,no-any-return]

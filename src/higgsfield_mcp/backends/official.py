@@ -240,6 +240,56 @@ class OfficialBackend(BackendDriver):
         return {"deleted": True, "character_id": character_id}
 
     @staticmethod
+    def _names_view(raw: Any) -> dict[str, Any]:
+        names: list[str] = []
+        seq: list[Any] = []
+        if isinstance(raw, list):
+            seq = raw
+        elif isinstance(raw, dict):
+            for key in ("styles", "motions", "items", "results", "data"):
+                v = raw.get(key)
+                if isinstance(v, list):
+                    seq = v
+                    break
+        for entry in seq:
+            if isinstance(entry, str):
+                names.append(entry)
+            elif isinstance(entry, dict):
+                n = entry.get("name") or entry.get("id") or entry.get("slug")
+                if n:
+                    names.append(str(n))
+        return {"count": len(names), "names": names, "raw": raw if isinstance(raw, dict) else {}}
+
+    async def get_balance(self) -> dict[str, Any]:
+        raw = await self._v1_request("POST", "/v1/billing/credits", json={})
+        d = raw if isinstance(raw, dict) else {}
+        credits = d.get("credits")
+        if credits is None:
+            credits = d.get("balance") or d.get("available_credits")
+        return {"credits": credits, "plan": d.get("plan") or d.get("tier"), "raw": d}
+
+    async def list_jobs_official(self, page: int = 1, page_size: int = 20) -> dict[str, Any]:
+        raw = await self._v1_request(
+            "POST", "/agents/jobs", json={"page": page, "page_size": page_size}
+        )
+        jobs: list[Any] = []
+        if isinstance(raw, dict):
+            for key in ("jobs", "items", "results", "job_sets", "data"):
+                v = raw.get(key)
+                if isinstance(v, list):
+                    jobs = v
+                    break
+        elif isinstance(raw, list):
+            jobs = raw
+        return {"count": len(jobs), "jobs": [j for j in jobs if isinstance(j, dict)]}
+
+    async def list_soul_styles(self) -> dict[str, Any]:
+        return self._names_view(await self._v1_request("GET", "/v1/text2image/soul-styles"))
+
+    async def list_motions(self) -> dict[str, Any]:
+        return self._names_view(await self._v1_request("GET", "/v1/motions"))
+
+    @staticmethod
     def _extract_image_urls(body: dict[str, Any]) -> list[str]:
         images = body.get("images") or []
         out: list[str] = []
