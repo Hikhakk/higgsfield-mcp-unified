@@ -8,6 +8,7 @@ from fastmcp import FastMCP
 
 from higgsfield_mcp import __version__
 from higgsfield_mcp.models import Backend, Kind
+from higgsfield_mcp.prompts import register_prompts
 from higgsfield_mcp.resources import register_resources
 from higgsfield_mcp.schemas import (
     Balance,
@@ -61,6 +62,7 @@ def build_server() -> FastMCP:
     )
     pool = BackendPool()
     register_resources(mcp)
+    register_prompts(mcp)
 
     @mcp.tool
     async def list_models_tool(
