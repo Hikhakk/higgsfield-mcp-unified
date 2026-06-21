@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 from fastmcp import FastMCP
 
 from higgsfield_mcp import __version__
 from higgsfield_mcp.models import Backend, Kind
+from higgsfield_mcp.schemas import (
+    CancelResult,
+    JobStatusResult,
+    ModelList,
+    PreflightResult,
+    SubmitResult,
+    UploadResult,
+)
 from higgsfield_mcp.tools import (
     BackendPool,
     cancel_job,
@@ -38,7 +44,7 @@ def build_server() -> FastMCP:
         kind: Kind | None = None,
         backend: Backend | None = None,
         include_unverified: bool = False,
-    ) -> dict[str, Any]:
+    ) -> ModelList:
         """List every supported Higgsfield model.
 
         Args:
@@ -47,7 +53,9 @@ def build_server() -> FastMCP:
             include_unverified: Include models whose endpoint is suspected
                 wrong upstream (currently: nano-banana-1).
         """
-        return await list_models(kind=kind, backend=backend, include_unverified=include_unverified)
+        return ModelList.model_validate(
+            await list_models(kind=kind, backend=backend, include_unverified=include_unverified)
+        )
 
     @mcp.tool
     async def generate_image_tool(
@@ -61,20 +69,22 @@ def build_server() -> FastMCP:
         seed: int | None = None,
         batch_size: int | None = None,
         enhance_prompt: bool | None = None,
-    ) -> dict[str, Any]:
+    ) -> SubmitResult:
         """Submit an image-generation request. Returns a job_handle to poll."""
-        return await generate_image(
-            pool,
-            model_id=model_id,
-            prompt=prompt,
-            aspect_ratio=aspect_ratio,
-            resolution=resolution,
-            quality=quality,
-            image_url=image_url,
-            input_image_urls=input_image_urls,
-            seed=seed,
-            batch_size=batch_size,
-            enhance_prompt=enhance_prompt,
+        return SubmitResult.model_validate(
+            await generate_image(
+                pool,
+                model_id=model_id,
+                prompt=prompt,
+                aspect_ratio=aspect_ratio,
+                resolution=resolution,
+                quality=quality,
+                image_url=image_url,
+                input_image_urls=input_image_urls,
+                seed=seed,
+                batch_size=batch_size,
+                enhance_prompt=enhance_prompt,
+            )
         )
 
     @mcp.tool
@@ -87,29 +97,31 @@ def build_server() -> FastMCP:
         resolution: str | None = None,
         sound: bool | None = None,
         seed: int | None = None,
-    ) -> dict[str, Any]:
+    ) -> SubmitResult:
         """Submit a video-generation request. Returns a job_handle to poll."""
-        return await generate_video(
-            pool,
-            model_id=model_id,
-            prompt=prompt,
-            image_url=image_url,
-            end_image_url=end_image_url,
-            duration=duration,
-            resolution=resolution,
-            sound=sound,
-            seed=seed,
+        return SubmitResult.model_validate(
+            await generate_video(
+                pool,
+                model_id=model_id,
+                prompt=prompt,
+                image_url=image_url,
+                end_image_url=end_image_url,
+                duration=duration,
+                resolution=resolution,
+                sound=sound,
+                seed=seed,
+            )
         )
 
     @mcp.tool
-    async def get_status_tool(job_handle: str) -> dict[str, Any]:
+    async def get_status_tool(job_handle: str) -> JobStatusResult:
         """Check job state and return output URLs when ready."""
-        return await get_status(pool, job_handle=job_handle)
+        return JobStatusResult.model_validate(await get_status(pool, job_handle=job_handle))
 
     @mcp.tool
-    async def cancel_job_tool(job_handle: str) -> dict[str, Any]:
+    async def cancel_job_tool(job_handle: str) -> CancelResult:
         """Cancel a queued or in-progress job."""
-        return await cancel_job(pool, job_handle=job_handle)
+        return CancelResult.model_validate(await cancel_job(pool, job_handle=job_handle))
 
     @mcp.tool
     async def upload_image_tool(
@@ -117,10 +129,10 @@ def build_server() -> FastMCP:
         data_base64: str | None = None,
         mime: str = "image/png",
         backend: Backend = "web",
-    ) -> dict[str, Any]:
+    ) -> UploadResult:
         """Upload a local image and get a hosted URL to use as image_url."""
-        return await upload_image(
-            pool, path=path, data_base64=data_base64, mime=mime, backend=backend
+        return UploadResult.model_validate(
+            await upload_image(pool, path=path, data_base64=data_base64, mime=mime, backend=backend)
         )
 
     @mcp.tool
@@ -128,19 +140,21 @@ def build_server() -> FastMCP:
         job_handle: str,
         poll_interval: float = 2.0,
         timeout_seconds: float = 600.0,
-    ) -> dict[str, Any]:
+    ) -> JobStatusResult:
         """Long-poll until the job reaches a terminal state (completed/failed/etc)."""
-        return await subscribe(
-            pool,
-            job_handle=job_handle,
-            poll_interval=poll_interval,
-            timeout_seconds=timeout_seconds,
+        return JobStatusResult.model_validate(
+            await subscribe(
+                pool,
+                job_handle=job_handle,
+                poll_interval=poll_interval,
+                timeout_seconds=timeout_seconds,
+            )
         )
 
     @mcp.tool
-    async def preflight_check_tool() -> dict[str, Any]:
+    async def preflight_check_tool() -> PreflightResult:
         """Check auth + config for both backends before submitting a generation."""
-        return await preflight_check(pool)
+        return PreflightResult.model_validate(await preflight_check(pool))
 
     return mcp
 
