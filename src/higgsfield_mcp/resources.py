@@ -7,14 +7,14 @@ can subscribe to the catalog instead of calling list_models repeatedly.
 
 from __future__ import annotations
 
-from typing import Any, cast
+from typing import Any, cast, get_args
 
 from fastmcp import FastMCP
 
 from higgsfield_mcp.models import Kind
 from higgsfield_mcp.tools import list_models
 
-_KINDS = ("image", "video", "speech")
+_KINDS = get_args(Kind)  # stays in sync with the Kind literal
 
 
 def register_resources(mcp: FastMCP) -> None:
