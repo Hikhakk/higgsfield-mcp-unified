@@ -101,7 +101,7 @@ Cursor / Claude Code / any stdio MCP client: point at the same `uv run … higgs
 | `upload_image(path \| data_base64, backend?)` | Upload a local image and get a hosted URL. |
 | `create_character` / `get_character` / `list_characters` / `delete_character` | Train and manage reusable Soul characters. |
 | `list_soul_styles()` / `list_motions()` | Soul style and DOP motion presets, by name. |
-| `get_balance()` | Available credits + plan (official backend). |
+| `get_balance()` | Available credits + plan (official backend). **Currently fails honestly** — no working balance/credits route exists in this API version (AOF-274); raises `EndpointUnavailableError` rather than a bare 404. |
 | `list_jobs(page?, page_size?)` | Recent generations (history). |
 
 ## Resources & prompts

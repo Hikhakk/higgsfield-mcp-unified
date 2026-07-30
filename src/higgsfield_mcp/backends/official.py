@@ -16,7 +16,7 @@ from typing import Any, cast
 import httpx
 
 from higgsfield_mcp.auth.api_key import ApiKeyAuth, load_from_env
-from higgsfield_mcp.errors import NetworkError, SchemaError, classify_http
+from higgsfield_mcp.errors import EndpointUnavailableError, NetworkError, SchemaError, classify_http
 from higgsfield_mcp.models import Backend as BackendName
 from higgsfield_mcp.models import ModelSpec
 from higgsfield_mcp.reliability import CircuitBreaker, new_idempotency_key, retrying_request
@@ -261,7 +261,27 @@ class OfficialBackend(BackendDriver):
         return {"count": len(names), "names": names, "raw": raw if isinstance(raw, dict) else {}}
 
     async def get_balance(self) -> dict[str, Any]:
-        raw = await self._v1_request("POST", "/v1/billing/credits", json={})
+        # `/v1/billing/credits` is not a real route (AOF-274, verified 2026-07):
+        # it 404s with a body/Allow-header pair byte-identical to a fabricated
+        # /v1/ path, meaning it's swallowed by the generic model-submission
+        # catch-all rather than served by a dedicated handler. No credits/balance
+        # endpoint is documented at docs.higgsfield.ai or exposed by either
+        # official SDK (higgsfield-client, higgsfield-js). Fail honestly instead
+        # of silently returning an empty Balance.
+        try:
+            raw = await self._v1_request("POST", "/v1/billing/credits", json={})
+        except BackendError as exc:
+            if exc.status_code == 404:
+                raise EndpointUnavailableError(
+                    "Credits endpoint unavailable in this API version: "
+                    "POST /v1/billing/credits returns 404 model_not_found and is "
+                    "not a real route — Higgsfield has no documented or "
+                    "SDK-supported balance/credits API as of 2026-07. Check your "
+                    "balance at https://platform.higgsfield.ai/ instead.",
+                    status_code=exc.status_code,
+                    body=exc.body,
+                ) from exc
+            raise
         d = raw if isinstance(raw, dict) else {}
         credits = d.get("credits")
         if credits is None:

@@ -47,6 +47,15 @@ class CircuitOpenError(BackendError):
     """The circuit breaker is open: the backend is failing and is cooling down."""
 
 
+class EndpointUnavailableError(BackendError):
+    """A capability has no working route in the current API version.
+
+    Distinct from a plain 404 (which usually means a *resource* wasn't found):
+    this means the *route itself* isn't real — confirmed by comparing its
+    response against a deliberately fabricated path and finding them identical.
+    """
+
+
 def parse_retry_after(value: str | None) -> float | None:
     """Parse a Retry-After header value in delta-seconds form. HTTP-date form is ignored."""
     if value is None:
