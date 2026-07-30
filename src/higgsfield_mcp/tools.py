@@ -319,7 +319,10 @@ async def delete_character(pool: BackendPool, character_id: str) -> dict[str, An
 
 
 async def get_balance(pool: BackendPool) -> dict[str, Any]:
-    """Best-effort credit balance + plan (official backend; response shape unverified)."""
+    """Credit balance + plan (official backend). Raises EndpointUnavailableError
+    on the known 404 (no working balance route currently exists upstream) and
+    re-raises any other failure — this never returns a fabricated/guessed
+    response."""
     backend = pool.get("official")
     return await backend.get_balance()  # type: ignore[attr-defined,no-any-return]
 
