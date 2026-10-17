@@ -92,6 +92,12 @@ def classify_http(
             status_code=status_code,
             body=text,
         )
+    if status_code == 400 and "concurrent" in text.lower():
+        return RateLimitError(
+            f"Concurrency limit reached (HTTP 400). Wait for a running request to finish. {text}",
+            status_code=status_code,
+            body=text,
+        )
     if status_code == 429:
         return RateLimitError(
             "Rate limited (HTTP 429).",

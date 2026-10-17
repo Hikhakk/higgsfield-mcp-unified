@@ -15,6 +15,8 @@ TOOLS = [
     "upload_image_tool",
     "subscribe_tool",
     "preflight_check_tool",
+    "estimate_cost_tool",
+    "list_model_presets_tool",
 ]
 
 

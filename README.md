@@ -1,7 +1,7 @@
 # higgsfield-mcp-unified
 
 Unified Model Context Protocol (MCP) server for [Higgsfield AI](https://higgsfield.ai/).
-It puts **117 Higgsfield image and video models** — Seedance 2.5, Kling 3.0 / O3, Wan 3, Genjutsu, Cinema Studio 4, Soul, Sora 2, Veo 3.x, Nano Banana, and more — plus Soul character training, account/history, and talking-head speech behind a single, typed tool surface for any MCP client (Claude Desktop, Claude Code, Cursor, …).
+It puts **119 Higgsfield image and video models** — Seedance 2.5, Kling 3.0 / O3, Wan 3, Genjutsu, Cinema Studio 4, Soul, Sora 2, Veo 3.x, Nano Banana, and more — plus Soul character training, account/history, and talking-head speech behind a single, typed tool surface for any MCP client (Claude Desktop, Claude Code, Cursor, …).
 
 > **Status: alpha.** Local/self-hosted and not yet on PyPI — install from source (below). The cloud web backend is opt-in and experimental.
 
@@ -92,13 +92,15 @@ Cursor / Claude Code / any stdio MCP client: point at the same `uv run … higgs
 | `recommend_model(intent, kind?, top?)` | Rank models for a described goal (local, no API call). |
 | `validate_params(model_id, params)` | Check params against a model's supported set before submitting. |
 | `preflight_check()` | Validate auth + reachability for both backends without spending a generation. |
-| `generate_image(model_id, prompt, …, soul_id?, extra_params?)` | Submit a text-to-image / image-edit job (supports Soul character refs). |
-| `generate_video(model_id, prompt?, image_url?, …, extra_params?)` | Submit a text-, image-, reference- or video-to-video job. |
+| `generate_image(model_id, prompt?, …, soul_id?, extra_params?, webhook_url?)` | Submit a text-to-image / image-edit job (supports Soul character refs). |
+| `generate_video(model_id, prompt?, image_url?, …, extra_params?, webhook_url?)` | Submit a text-, image-, reference- or video-to-video job. |
+| `estimate_cost(model_id, params)` | Price a request (credits + USD) without submitting it. |
+| `list_model_presets(model_id, search?, size?, cursor?)` | Preset/option catalogs: Genjutsu Restyle styles, Marketing Studio Image presets, AI Influencer appearance options. |
 | `generate_batch(requests[])` | Fan out multiple image/video submits concurrently. |
 | `generate_speech_video(image_url, audio_url, prompt?)` | Talking-head video from a face image + WAV audio. |
-| `get_status(job_handle)` / `subscribe(job_handle)` | Poll, or long-poll until terminal, with output URLs. |
+| `get_status(job_handle)` / `subscribe(job_handle)` | Poll, or long-poll (2s → 10s backoff) until terminal. Returns `images`, `video_url`, `audio_urls` and `artifacts` (zip/mov/jsx/fbx/ply). |
 | `cancel_job(job_handle)` | Cancel a queued/in-progress job. |
-| `upload_image(path \| data_base64, backend?)` | Upload a local image and get a hosted URL. |
+| `upload_image(path \| data_base64, mime?, backend?)` | Upload a local image, WAV or MP4 and get a hosted URL (official backend by default). |
 | `create_character(name, image_urls, model_version?)` / `get_character` / `list_characters` / `delete_character` | Train and manage reusable Soul characters (`v1` / `v2` / `cinema`). |
 | `list_soul_styles()` / `list_motions()` | Soul style and DOP motion presets, by name. |
 | `get_balance()` | Available credits + plan (official backend). |
@@ -116,9 +118,13 @@ Run `list_models()` (or read the `higgsfield://models` resource) for the live ca
 - **`verified`** — endpoint confirmed against SDK source / live probe (shown by default).
 - **`inferred`** — slug confirmed real but the endpoint is a best-guess pending live verification (hidden unless `include_unverified=true`, and noted as such).
 
-Official backend (verified, generated from [docs.higgsfield.ai](https://docs.higgsfield.ai/docs/models.md)): 83 endpoints — Soul / Soul V2 / Soul Cinema, Ads Studio, Marketing Studio, Grok Image 2, Ideogram 4, Qwen Image 3, Recraft v4.1, Z-Image Turbo; Seedance 2.0 / 2.5, Kling 2.5 Turbo / 2.6 / 3.0 / O3 / Omni + Motion Control, Wan 2.6 / 2.7 / 3 / 3 Prime, Happy Horse 1.0 / 1.1, Genjutsu, Cinema Studio 4, MiniMax Hailuo 2.3 / H3, LTX 2.5, PixVerse v6, Grok Video 1.5.
+Official backend (verified, generated from [docs.higgsfield.ai](https://docs.higgsfield.ai/docs/models.md) and cross-checked against the [open.higgsfield.ai](https://open.higgsfield.ai/explore) console): 85 endpoints — Soul / Soul V2 (text- and image-to-image) / Soul Cinema, AI Influencer, Ads Studio, Marketing Studio, Grok Image 2, Ideogram 4, Qwen Image 3, Recraft v4.1, Z-Image Turbo; Seedance 2.0 / 2.5, Kling 2.5 Turbo / 2.6 / 3.0 / O3 / Omni + Motion Control, Wan 2.6 / 2.7 / 3 / 3 Prime, Happy Horse 1.0 / 1.1, Genjutsu, Cinema Studio 4, MiniMax Hailuo 2.3 / H3, LTX 2.5, PixVerse v6, Grok Video 1.5.
 
 Params beyond the named tool arguments (e.g. `image_urls`, `video_url`, `generate_audio`, `negative_prompt`, `preset_id`) go in `extra_params`; each model's `supports` and `constraints` list what it accepts.
+
+### Webhooks
+
+Pass `webhook_url` (public HTTPS, official models only) to have Higgsfield POST the terminal result to your endpoint. It is sent as the documented `hf_webhook` query parameter. Deliveries use the envelope `{request_id, status, error, payload}` with outputs nested under `payload`, may be duplicated (dedupe by `request_id` + `status`), and are retried for up to two hours on network errors / `5xx`. Polling with `get_status` remains the recovery path. See [Webhooks](https://docs.higgsfield.ai/docs/how-to/webhooks).
 Cloud backend: Kling 3.0 / O3 FLF, Seedance 2.0 / 1.5, Wan 2.6, Veo 3, Grok, Sora 2, Nano Banana, Soul v2, OpenAI Hazel, and newest-tier `inferred` entries (Veo 3.1, Wan 2.7, Kling 3.0 Turbo, Hailuo 02, FLUX.2, Z-Image, Cinematic Studio, …).
 
 ## Development

@@ -27,7 +27,7 @@ async def test_generate_batch_mixed_ok_and_error(pool: BackendPool) -> None:
             [
                 {"kind": "image", "model_id": "higgsfield-ai/soul/standard", "prompt": "a"},
                 {"kind": "image", "model_id": "higgsfield-ai/soul/standard", "prompt": "b"},
-                {"kind": "image", "model_id": "higgsfield-ai/soul/standard"},  # missing prompt
+                {"kind": "image", "prompt": "c"},  # missing model_id
             ],
         )
     assert out["count"] == 3

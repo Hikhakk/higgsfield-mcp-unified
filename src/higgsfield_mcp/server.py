@@ -17,11 +17,13 @@ from higgsfield_mcp.schemas import (
     Character,
     CharacterDeleted,
     CharacterList,
+    EstimateResult,
     JobList,
     JobStatusResult,
     ModelList,
     NameList,
     PreflightResult,
+    PresetList,
     RecommendResult,
     SubmitResult,
     UploadResult,
@@ -32,6 +34,7 @@ from higgsfield_mcp.tools import (
     cancel_job,
     create_character,
     delete_character,
+    estimate_cost,
     generate_batch,
     generate_image,
     generate_speech_video,
@@ -41,6 +44,7 @@ from higgsfield_mcp.tools import (
     get_status,
     list_characters,
     list_jobs,
+    list_model_presets,
     list_models,
     list_motions,
     list_soul_styles,
@@ -87,7 +91,7 @@ def build_server() -> FastMCP:
     @mcp.tool
     async def generate_image_tool(
         model_id: str,
-        prompt: str,
+        prompt: str | None = None,
         aspect_ratio: str | None = None,
         resolution: str | None = None,
         quality: str | None = None,
@@ -99,11 +103,13 @@ def build_server() -> FastMCP:
         soul_id: str | None = None,
         soul_strength: float | None = None,
         extra_params: dict[str, Any] | None = None,
+        webhook_url: str | None = None,
     ) -> SubmitResult:
         """Submit an image-generation request. Returns a job_handle to poll.
 
         Pass any other model-specific field from list_models' ``supports`` (e.g.
         ``image_urls``, ``negative_prompt``, ``style_id``) in ``extra_params``.
+        ``webhook_url`` (official models, public HTTPS) receives the terminal result.
         """
         return SubmitResult.model_validate(
             await generate_image(
@@ -121,6 +127,7 @@ def build_server() -> FastMCP:
                 soul_id=soul_id,
                 soul_strength=soul_strength,
                 extra_params=extra_params,
+                webhook_url=webhook_url,
             )
         )
 
@@ -135,11 +142,13 @@ def build_server() -> FastMCP:
         sound: bool | None = None,
         seed: int | None = None,
         extra_params: dict[str, Any] | None = None,
+        webhook_url: str | None = None,
     ) -> SubmitResult:
         """Submit a video-generation request. Returns a job_handle to poll.
 
         Pass any other model-specific field from list_models' ``supports`` (e.g.
         ``video_url``, ``image_urls``, ``generate_audio``, ``preset_id``) in ``extra_params``.
+        ``webhook_url`` (official models, public HTTPS) receives the terminal result.
         """
         return SubmitResult.model_validate(
             await generate_video(
@@ -153,7 +162,29 @@ def build_server() -> FastMCP:
                 sound=sound,
                 seed=seed,
                 extra_params=extra_params,
+                webhook_url=webhook_url,
             )
+        )
+
+    @mcp.tool
+    async def estimate_cost_tool(model_id: str, params: dict[str, Any]) -> EstimateResult:
+        """Price a request (credits + USD) before submitting it. Pass the same fields you
+        would send to generate_image/generate_video, e.g. {"prompt": ..., "duration": 10}.
+        Official models only; unsupported keys are dropped."""
+        return EstimateResult.model_validate(await estimate_cost(pool, model_id, params))
+
+    @mcp.tool
+    async def list_model_presets_tool(
+        model_id: str,
+        search: str | None = None,
+        size: int | None = None,
+        cursor: int | None = None,
+    ) -> PresetList:
+        """List preset/option catalogs: Genjutsu Restyle styles (send items[].id as preset_id),
+        Marketing Studio Image presets (preset_id; supports search/size/cursor) and AI Influencer
+        appearance categories (option keys go in selection)."""
+        return PresetList.model_validate(
+            await list_model_presets(pool, model_id, search=search, size=size, cursor=cursor)
         )
 
     @mcp.tool
@@ -171,9 +202,10 @@ def build_server() -> FastMCP:
         path: str | None = None,
         data_base64: str | None = None,
         mime: str = "image/png",
-        backend: Backend = "web",
+        backend: Backend = "official",
     ) -> UploadResult:
-        """Upload a local image and get a hosted URL to use as image_url."""
+        """Upload a local image, WAV audio or MP4 video and get a hosted URL to use as
+        image_url / audio_url / video_url. mime must match the file (e.g. video/mp4)."""
         return UploadResult.model_validate(
             await upload_image(pool, path=path, data_base64=data_base64, mime=mime, backend=backend)
         )
@@ -184,7 +216,10 @@ def build_server() -> FastMCP:
         poll_interval: float = 2.0,
         timeout_seconds: float = 600.0,
     ) -> JobStatusResult:
-        """Long-poll until the job reaches a terminal state (completed/failed/etc)."""
+        """Long-poll until the job reaches a terminal state (completed/failed/etc).
+
+        Polls start at poll_interval and back off to 10s. Results include images,
+        video_url, audio_urls and any extra artifacts (zip/mov/jsx/fbx/ply)."""
         return JobStatusResult.model_validate(
             await subscribe(
                 pool,
@@ -283,7 +318,7 @@ def build_server() -> FastMCP:
     @mcp.tool
     async def generate_batch_tool(requests: list[dict[str, Any]]) -> BatchResult:
         """Submit multiple generations at once. Each request: {kind, model_id, prompt, ...params,
-        extra_params?}."""
+        extra_params?, webhook_url?}."""
         return BatchResult.model_validate(await generate_batch(pool, requests))
 
     return mcp
