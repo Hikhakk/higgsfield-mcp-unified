@@ -1,11 +1,11 @@
 {
   "mcpServers": {
     "higgsfield": {
-      "command": "uvx",
-      "args": ["higgsfield-mcp"],
+      "command": "uv",
+      "args": ["run", "--directory", "/path/to/higgsfield-mcp-unified", "higgsfield-mcp"],
       "env": {
-        "HIGGSFIELD_API_KEY": "your-key",
-        "HIGGSFIELD_SECRET": "your-secret"
+        "HIGGSFIELD_API_KEY": "your-key-id",
+        "HIGGSFIELD_SECRET": "your-key-secret"
       }
     }
   }
