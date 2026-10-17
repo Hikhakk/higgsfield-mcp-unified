@@ -1,6 +1,6 @@
-"""Official backend driver: ``platform.higgsfield.ai``.
+"""Official backend driver: ``api.higgsfield.ai``.
 
-API shape (https://docs.higgsfield.ai/how-to/introduction.md):
+API shape (https://docs.higgsfield.ai/docs/how-to/introduction.md):
 
 * ``POST /{model_id}`` -> ``{ request_id, status_url, cancel_url, ... }``
 * ``GET  /requests/{request_id}/status`` -> status payload
@@ -23,7 +23,7 @@ from higgsfield_mcp.reliability import CircuitBreaker, new_idempotency_key, retr
 
 from .base import BackendDriver, BackendError, JobHandle, JobState, JobStatus
 
-BASE_URL = "https://platform.higgsfield.ai"
+BASE_URL = "https://api.higgsfield.ai"
 
 _STATE_MAP: dict[str, JobState] = {
     "queued": "queued",
@@ -69,7 +69,7 @@ class OfficialBackend(BackendDriver):
         async def _send() -> httpx.Response:
             try:
                 return await self._client.post(
-                    f"/{model.endpoint}", json=params, headers={"X-Idempotency-Key": idem}
+                    f"/{model.endpoint}", json=params, headers={"Idempotency-Key": idem}
                 )
             except httpx.HTTPError as exc:
                 raise NetworkError(str(exc)) from exc
@@ -138,14 +138,18 @@ class OfficialBackend(BackendDriver):
         body = self._json_or_raise(resp)
         upload_url = body.get("upload_url")
         public_url = body.get("public_url") or body.get("url")
+        upload_headers = {str(k): str(v) for k, v in (body.get("upload_headers") or {}).items()}
         if not upload_url or not public_url:
             raise BackendError(
                 f"generate-upload-url response missing upload_url/public_url: {body!r}",
                 status_code=resp.status_code,
             )
-        # The signed PUT must NOT carry the platform Authorization header.
+        # The signed PUT must NOT carry the API Authorization header, but must carry
+        # every header the presign response lists (e.g. x-amz-tagging).
         async with httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=10.0)) as raw:
-            put = await raw.put(upload_url, content=data, headers={"Content-Type": mime})
+            put = await raw.put(
+                upload_url, content=data, headers={"Content-Type": mime, **upload_headers}
+            )
             if put.status_code >= 400:
                 raise BackendError(
                     f"Signed upload PUT failed: HTTP {put.status_code}",
@@ -196,7 +200,13 @@ class OfficialBackend(BackendDriver):
 
     @staticmethod
     def _character_view(raw: dict[str, Any]) -> dict[str, Any]:
-        images = raw.get("image_urls") or raw.get("images") or raw.get("medias") or []
+        images = (
+            raw.get("input_images")
+            or raw.get("image_urls")
+            or raw.get("images")
+            or raw.get("medias")
+            or []
+        )
         return {
             "id": raw.get("id") or raw.get("custom_reference_id") or raw.get("soul_id") or "",
             "name": raw.get("name") or raw.get("title") or "",
@@ -205,15 +215,21 @@ class OfficialBackend(BackendDriver):
             "raw": raw,
         }
 
-    async def create_character(self, name: str, image_urls: list[str]) -> dict[str, Any]:
-        body = self._v1_payload_create(name, image_urls)
+    async def create_character(
+        self, name: str, image_urls: list[str], model_version: str = "v1"
+    ) -> dict[str, Any]:
+        body = self._v1_payload_create(name, image_urls, model_version)
         raw = await self._v1_request("POST", "/v1/custom-references", json=body)
         return self._character_view(raw if isinstance(raw, dict) else {"raw": raw})
 
     @staticmethod
-    def _v1_payload_create(name: str, image_urls: list[str]) -> dict[str, Any]:
-        # Request shape is a best guess (CLI says 5-20 training images).
-        return {"name": name, "image_urls": list(image_urls)}
+    def _v1_payload_create(name: str, image_urls: list[str], model_version: str) -> dict[str, Any]:
+        # https://docs.higgsfield.ai/docs/models/soul-id/create-character
+        return {
+            "name": name,
+            "model_version": model_version,
+            "input_images": [{"type": "image_url", "image_url": u} for u in image_urls],
+        }
 
     async def get_character(self, character_id: str) -> dict[str, Any]:
         raw = await self._v1_request("GET", f"/v1/custom-references/{character_id}")

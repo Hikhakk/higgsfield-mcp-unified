@@ -56,10 +56,12 @@ def _spec_for(model_id: str, expected_kind: Kind | None = None) -> ModelSpec:
     return spec
 
 
-def _filter_params(spec: ModelSpec, params: dict[str, Any]) -> dict[str, Any]:
-    """Drop unknown params and warn via a synthetic key."""
-    accepted = {k: v for k, v in params.items() if k in spec.supports and v is not None}
-    return accepted
+def _filter_params(
+    spec: ModelSpec, params: dict[str, Any], extra_params: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """Merge model-specific extras over the named params, then drop unsupported/None keys."""
+    merged = {**params, **(extra_params or {})}
+    return {k: v for k, v in merged.items() if k in spec.supports and v is not None}
 
 
 # ---------------------------------------------------------------------------
@@ -94,6 +96,7 @@ async def generate_image(
     enhance_prompt: bool | None = None,
     soul_id: str | None = None,
     soul_strength: float | None = None,
+    extra_params: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Submit an image-generation job. Returns a serialisable JobHandle string."""
     spec = _spec_for(model_id, expected_kind="image")
@@ -112,6 +115,7 @@ async def generate_image(
             "custom_reference_id": soul_id,
             "custom_reference_strength": soul_strength,
         },
+        extra_params,
     )
     backend = pool.get(spec.backend)
     handle = await backend.submit(spec, params)
@@ -121,16 +125,20 @@ async def generate_image(
 async def generate_video(
     pool: BackendPool,
     model_id: str,
-    prompt: str,
+    prompt: str | None = None,
     image_url: str | None = None,
     end_image_url: str | None = None,
     duration: int | None = None,
     resolution: str | None = None,
     sound: bool | None = None,
     seed: int | None = None,
+    extra_params: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Submit a video-generation job (text-to-video or image-to-video)."""
     spec = _spec_for(model_id, expected_kind="video")
+    sound_value: bool | str | None = sound
+    if spec.backend == "official" and sound is not None:
+        sound_value = "on" if sound else "off"  # official Kling takes an on/off enum
     params = _filter_params(
         spec,
         {
@@ -139,9 +147,10 @@ async def generate_video(
             "end_image_url": end_image_url,
             "duration": duration,
             "resolution": resolution,
-            "sound": sound,
+            "sound": sound_value,
             "seed": seed,
         },
+        extra_params,
     )
     backend = pool.get(spec.backend)
     handle = await backend.submit(spec, params)
@@ -294,10 +303,12 @@ async def validate_params(model_id: str, params: dict[str, Any]) -> dict[str, An
     }
 
 
-async def create_character(pool: BackendPool, name: str, image_urls: list[str]) -> dict[str, Any]:
+async def create_character(
+    pool: BackendPool, name: str, image_urls: list[str], model_version: str = "v1"
+) -> dict[str, Any]:
     """Train a reusable Soul character from reference image URLs (official backend)."""
     backend = pool.get("official")
-    return await backend.create_character(name, image_urls)  # type: ignore[attr-defined,no-any-return]
+    return await backend.create_character(name, image_urls, model_version)  # type: ignore[attr-defined,no-any-return]
 
 
 async def get_character(pool: BackendPool, character_id: str) -> dict[str, Any]:
@@ -357,7 +368,8 @@ async def generate_speech_video(
 async def generate_batch(pool: BackendPool, requests: list[dict[str, Any]]) -> dict[str, Any]:
     """Submit multiple generations concurrently.
 
-    Each request is a dict: ``{"kind": "image"|"video", "model_id", "prompt", ...params}``.
+    Each request is a dict: ``{"kind": "image"|"video", "model_id", "prompt", ...params}``;
+    model-specific fields go in ``extra_params``. Video requests may omit ``prompt``.
     Returns a per-item result with ``ok`` and either ``job_handle`` or ``error`` (one bad
     item never fails the others).
     """
@@ -365,14 +377,15 @@ async def generate_batch(pool: BackendPool, requests: list[dict[str, Any]]) -> d
     async def _one(req: dict[str, Any]) -> dict[str, Any]:
         model_id = req.get("model_id")
         prompt = req.get("prompt")
-        if not model_id or not prompt:
+        is_video = req.get("kind") == "video"
+        if not model_id or (not prompt and not is_video):
             return {
                 "ok": False,
                 "model_id": model_id or "",
-                "error": "each request needs 'model_id' and 'prompt'",
+                "error": "each request needs 'model_id' (and 'prompt' for images)",
             }
         try:
-            if req.get("kind") == "video":
+            if is_video:
                 res = await generate_video(
                     pool,
                     model_id=model_id,
@@ -383,12 +396,13 @@ async def generate_batch(pool: BackendPool, requests: list[dict[str, Any]]) -> d
                     resolution=req.get("resolution"),
                     sound=req.get("sound"),
                     seed=req.get("seed"),
+                    extra_params=req.get("extra_params"),
                 )
             else:
                 res = await generate_image(
                     pool,
                     model_id=model_id,
-                    prompt=prompt,
+                    prompt=str(prompt),
                     aspect_ratio=req.get("aspect_ratio"),
                     resolution=req.get("resolution"),
                     quality=req.get("quality"),
@@ -399,6 +413,7 @@ async def generate_batch(pool: BackendPool, requests: list[dict[str, Any]]) -> d
                     enhance_prompt=req.get("enhance_prompt"),
                     soul_id=req.get("soul_id"),
                     soul_strength=req.get("soul_strength"),
+                    extra_params=req.get("extra_params"),
                 )
             return {
                 "ok": True,

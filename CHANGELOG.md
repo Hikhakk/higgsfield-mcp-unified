@@ -5,6 +5,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed
+
+- Official backend moved to `api.higgsfield.ai` (dashboard / keys now at `open.higgsfield.ai`), per https://docs.higgsfield.ai/docs.
+- Official registry regenerated from the model docs: 83 endpoints with documented params and constraints. Endpoints no longer documented (Reve, Seedream v4, FLUX.1 Kontext, DOP, Seedance v1, Kling v2.1) were removed.
+- Submissions send the documented `Idempotency-Key` header; uploads forward the presign `upload_headers`.
+- `create_character` sends the documented `input_images` body and accepts `model_version` (`v1` / `v2` / `cinema`).
+- Official HTTP 403 with a credits message maps to `InsufficientCreditsError`.
+
+### Added
+
+- `extra_params` on `generate_image` / `generate_video` / `generate_batch` for model-specific fields; video `prompt` is optional.
+
 ### Added
 
 - Initial unified MCP server combining official `platform.higgsfield.ai` API and opt-in `cloud.higgsfield.ai` / `fnf.higgsfield.ai` web backend.

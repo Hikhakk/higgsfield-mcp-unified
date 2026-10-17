@@ -16,6 +16,10 @@ class AuthError(BackendError):
     """401/403 with no bot-challenge signal: credentials are missing or invalid."""
 
 
+class InsufficientCreditsError(BackendError):
+    """403 from the official API when the account balance cannot cover the generation."""
+
+
 class RateLimitError(BackendError):
     """429: too many requests. ``retry_after`` is seconds from the Retry-After header."""
 
@@ -73,6 +77,12 @@ def classify_http(
             return BotChallengeError(
                 "Cloudflare TLS-fingerprint challenge (HTTP 403). "
                 "Upgrade curl-cffi or retry later from a residential IP.",
+                status_code=status_code,
+                body=text,
+            )
+        if "credit" in text.lower():
+            return InsufficientCreditsError(
+                f"Insufficient credits (HTTP 403). Top up at https://open.higgsfield.ai. {text}",
                 status_code=status_code,
                 body=text,
             )

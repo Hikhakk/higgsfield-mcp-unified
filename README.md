@@ -1,7 +1,7 @@
 # higgsfield-mcp-unified
 
 Unified Model Context Protocol (MCP) server for [Higgsfield AI](https://higgsfield.ai/).
-It puts **43 Higgsfield image and video models** — Sora 2, Veo 3.x, Kling 3.0, Seedance 2.0, Wan, Soul, DOP, Nano Banana, FLUX, and more — plus Soul character training, account/history, and talking-head speech behind a single, typed tool surface for any MCP client (Claude Desktop, Claude Code, Cursor, …).
+It puts **117 Higgsfield image and video models** — Seedance 2.5, Kling 3.0 / O3, Wan 3, Genjutsu, Cinema Studio 4, Soul, Sora 2, Veo 3.x, Nano Banana, and more — plus Soul character training, account/history, and talking-head speech behind a single, typed tool surface for any MCP client (Claude Desktop, Claude Code, Cursor, …).
 
 > **Status: alpha.** Local/self-hosted and not yet on PyPI — install from source (below). The cloud web backend is opt-in and experimental.
 
@@ -18,7 +18,7 @@ The official hosted MCP (`mcp.higgsfield.ai`) is great but runs on Higgsfield's 
 
 ## Backends
 
-- **Official REST API** (`platform.higgsfield.ai`) — stable, `KEY:SECRET` auth. Default; rock-solid.
+- **Official REST API** (`api.higgsfield.ai`) — stable, `KEY:SECRET` auth. Default; rock-solid. Keys come from the [Higgsfield dashboard](https://open.higgsfield.ai).
 - **Cloud web app** (`fnf.higgsfield.ai`) — the newest models, reachable only via a Clerk cookie. Opt-in and experimental (see warning below).
 
 ## Install (from source)
@@ -37,7 +37,7 @@ uv run higgsfield-mcp        # starts the stdio MCP server
 The official backend needs two environment variables:
 
 ```bash
-export HIGGSFIELD_API_KEY=...        # from the platform.higgsfield.ai dashboard
+export HIGGSFIELD_API_KEY=...        # key ID from the open.higgsfield.ai dashboard
 export HIGGSFIELD_SECRET=...
 ```
 
@@ -92,14 +92,14 @@ Cursor / Claude Code / any stdio MCP client: point at the same `uv run … higgs
 | `recommend_model(intent, kind?, top?)` | Rank models for a described goal (local, no API call). |
 | `validate_params(model_id, params)` | Check params against a model's supported set before submitting. |
 | `preflight_check()` | Validate auth + reachability for both backends without spending a generation. |
-| `generate_image(model_id, prompt, …, soul_id?)` | Submit a text-to-image / image-edit job (supports Soul character refs). |
-| `generate_video(model_id, prompt, image_url?, …)` | Submit a text-to-video / image-to-video job. |
+| `generate_image(model_id, prompt, …, soul_id?, extra_params?)` | Submit a text-to-image / image-edit job (supports Soul character refs). |
+| `generate_video(model_id, prompt?, image_url?, …, extra_params?)` | Submit a text-, image-, reference- or video-to-video job. |
 | `generate_batch(requests[])` | Fan out multiple image/video submits concurrently. |
 | `generate_speech_video(image_url, audio_url, prompt?)` | Talking-head video from a face image + WAV audio. |
 | `get_status(job_handle)` / `subscribe(job_handle)` | Poll, or long-poll until terminal, with output URLs. |
 | `cancel_job(job_handle)` | Cancel a queued/in-progress job. |
 | `upload_image(path \| data_base64, backend?)` | Upload a local image and get a hosted URL. |
-| `create_character` / `get_character` / `list_characters` / `delete_character` | Train and manage reusable Soul characters. |
+| `create_character(name, image_urls, model_version?)` / `get_character` / `list_characters` / `delete_character` | Train and manage reusable Soul characters (`v1` / `v2` / `cinema`). |
 | `list_soul_styles()` / `list_motions()` | Soul style and DOP motion presets, by name. |
 | `get_balance()` | Available credits + plan (official backend). |
 | `list_jobs(page?, page_size?)` | Recent generations (history). |
@@ -116,7 +116,9 @@ Run `list_models()` (or read the `higgsfield://models` resource) for the live ca
 - **`verified`** — endpoint confirmed against SDK source / live probe (shown by default).
 - **`inferred`** — slug confirmed real but the endpoint is a best-guess pending live verification (hidden unless `include_unverified=true`, and noted as such).
 
-Official backend (verified): Soul, Reve, Seedream v4 (text-to-image + edit), FLUX.1 Kontext Max, DOP (preview/standard), Seedance v1 Pro, Kling v2.1 Pro.
+Official backend (verified, generated from [docs.higgsfield.ai](https://docs.higgsfield.ai/docs/models.md)): 83 endpoints — Soul / Soul V2 / Soul Cinema, Ads Studio, Marketing Studio, Grok Image 2, Ideogram 4, Qwen Image 3, Recraft v4.1, Z-Image Turbo; Seedance 2.0 / 2.5, Kling 2.5 Turbo / 2.6 / 3.0 / O3 / Omni + Motion Control, Wan 2.6 / 2.7 / 3 / 3 Prime, Happy Horse 1.0 / 1.1, Genjutsu, Cinema Studio 4, MiniMax Hailuo 2.3 / H3, LTX 2.5, PixVerse v6, Grok Video 1.5.
+
+Params beyond the named tool arguments (e.g. `image_urls`, `video_url`, `generate_audio`, `negative_prompt`, `preset_id`) go in `extra_params`; each model's `supports` and `constraints` list what it accepts.
 Cloud backend: Kling 3.0 / O3 FLF, Seedance 2.0 / 1.5, Wan 2.6, Veo 3, Grok, Sora 2, Nano Banana, Soul v2, OpenAI Hazel, and newest-tier `inferred` entries (Veo 3.1, Wan 2.7, Kling 3.0 Turbo, Hailuo 02, FLUX.2, Z-Image, Cinematic Studio, …).
 
 ## Development

@@ -8,7 +8,7 @@ from higgsfield_mcp.models import REGISTRY, UnknownModelError
 
 
 def test_registry_has_all_known_models() -> None:
-    assert len(REGISTRY.by_id) == 43, "expected 9 official + 34 web"
+    assert len(REGISTRY.by_id) == 117, "expected 83 official + 34 web"
 
 
 def test_no_duplicate_ids() -> None:
@@ -19,19 +19,19 @@ def test_no_duplicate_ids() -> None:
 def test_split_by_backend() -> None:
     official = REGISTRY.list(backend="official", include_unverified=True)
     web = REGISTRY.list(backend="web", include_unverified=True)
-    assert len(official) == 9
+    assert len(official) == 83
     assert len(web) == 34
 
 
 def test_split_by_kind() -> None:
     images = REGISTRY.list(kind="image", include_unverified=True)
     videos = REGISTRY.list(kind="video", include_unverified=True)
-    assert len(images) == 17
-    assert len(videos) == 26
+    assert len(images) == 28
+    assert len(videos) == 89
 
 
 def test_verified_default_count() -> None:
-    assert len(REGISTRY.list()) == 27
+    assert len(REGISTRY.list()) == 101
     assert sum(1 for s in REGISTRY.by_id.values() if s.confidence == "inferred") == 16
 
 
@@ -46,6 +46,16 @@ def test_known_model_lookup() -> None:
     assert spec.backend == "official"
 
 
+def test_official_matches_docs_catalog() -> None:
+    """docs.higgsfield.ai lists 84 workflows (17 image incl. Soul ID training, 67 video)."""
+    official = REGISTRY.list(backend="official")
+    assert sum(s.kind == "image" for s in official) == 16
+    assert sum(s.kind == "video" for s in official) == 67
+    assert all(
+        s.notes.startswith("docs: https://docs.higgsfield.ai/docs/models/") for s in official
+    )
+
+
 def test_unknown_model_raises() -> None:
     with pytest.raises(UnknownModelError):
         REGISTRY.get("not-a-real-model")
@@ -55,7 +65,7 @@ def test_official_endpoint_format() -> None:
     """Official endpoints are vendor/model[/...] paths, not absolute URLs."""
     for spec in REGISTRY.list(backend="official"):
         assert "://" not in spec.endpoint
-        assert spec.endpoint == spec.id  # by convention; id == path on platform.higgsfield.ai
+        assert spec.endpoint == spec.id  # by convention; id == path on api.higgsfield.ai
 
 
 def test_web_endpoint_format() -> None:

@@ -98,8 +98,13 @@ def build_server() -> FastMCP:
         enhance_prompt: bool | None = None,
         soul_id: str | None = None,
         soul_strength: float | None = None,
+        extra_params: dict[str, Any] | None = None,
     ) -> SubmitResult:
-        """Submit an image-generation request. Returns a job_handle to poll."""
+        """Submit an image-generation request. Returns a job_handle to poll.
+
+        Pass any other model-specific field from list_models' ``supports`` (e.g.
+        ``image_urls``, ``negative_prompt``, ``style_id``) in ``extra_params``.
+        """
         return SubmitResult.model_validate(
             await generate_image(
                 pool,
@@ -115,21 +120,27 @@ def build_server() -> FastMCP:
                 enhance_prompt=enhance_prompt,
                 soul_id=soul_id,
                 soul_strength=soul_strength,
+                extra_params=extra_params,
             )
         )
 
     @mcp.tool
     async def generate_video_tool(
         model_id: str,
-        prompt: str,
+        prompt: str | None = None,
         image_url: str | None = None,
         end_image_url: str | None = None,
         duration: int | None = None,
         resolution: str | None = None,
         sound: bool | None = None,
         seed: int | None = None,
+        extra_params: dict[str, Any] | None = None,
     ) -> SubmitResult:
-        """Submit a video-generation request. Returns a job_handle to poll."""
+        """Submit a video-generation request. Returns a job_handle to poll.
+
+        Pass any other model-specific field from list_models' ``supports`` (e.g.
+        ``video_url``, ``image_urls``, ``generate_audio``, ``preset_id``) in ``extra_params``.
+        """
         return SubmitResult.model_validate(
             await generate_video(
                 pool,
@@ -141,6 +152,7 @@ def build_server() -> FastMCP:
                 resolution=resolution,
                 sound=sound,
                 seed=seed,
+                extra_params=extra_params,
             )
         )
 
@@ -207,10 +219,15 @@ def build_server() -> FastMCP:
         return ValidateResult.model_validate(await validate_params(model_id, params))
 
     @mcp.tool
-    async def create_character_tool(name: str, image_urls: list[str]) -> Character:
-        """Train a reusable Soul character from reference images. Results best-effort until verified."""
+    async def create_character_tool(
+        name: str, image_urls: list[str], model_version: str = "v1"
+    ) -> Character:
+        """Train a reusable Soul character (1-100 images). model_version: v1 | v2 | cinema,
+        matching the Soul endpoint the character will be used with."""
         return Character.model_validate(
-            await create_character(pool, name=name, image_urls=image_urls)
+            await create_character(
+                pool, name=name, image_urls=image_urls, model_version=model_version
+            )
         )
 
     @mcp.tool
@@ -265,7 +282,8 @@ def build_server() -> FastMCP:
 
     @mcp.tool
     async def generate_batch_tool(requests: list[dict[str, Any]]) -> BatchResult:
-        """Submit multiple generations at once. Each request: {kind, model_id, prompt, ...params}."""
+        """Submit multiple generations at once. Each request: {kind, model_id, prompt, ...params,
+        extra_params?}."""
         return BatchResult.model_validate(await generate_batch(pool, requests))
 
     return mcp
