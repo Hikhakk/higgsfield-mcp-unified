@@ -4,13 +4,13 @@ version = "0.1.0"
 description = "Unified MCP server for Higgsfield AI: official api.higgsfield.ai API + opt-in cloud.higgsfield.ai web backend, exposing 119 image and video models."
 readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "MIT" }
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [{ name = "Hikhakk" }]
 keywords = ["mcp", "model-context-protocol", "higgsfield", "ai", "image-generation", "video-generation", "sora", "veo", "kling"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
@@ -41,6 +41,7 @@ higgsfield-mcp = "higgsfield_mcp.server:main"
 Homepage = "https://github.com/Hikhakk/higgsfield-mcp-unified"
 Repository = "https://github.com/Hikhakk/higgsfield-mcp-unified"
 Issues = "https://github.com/Hikhakk/higgsfield-mcp-unified/issues"
+Changelog = "https://github.com/Hikhakk/higgsfield-mcp-unified/blob/main/CHANGELOG.md"
 
 [build-system]
 requires = ["uv_build>=0.9.10,<0.14.0"]
