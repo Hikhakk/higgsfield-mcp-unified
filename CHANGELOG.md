@@ -5,45 +5,56 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
-### Changed
+## [0.1.0] - 2026-10-17
 
-- Official backend moved to `api.higgsfield.ai` (dashboard / keys now at `open.higgsfield.ai`), per https://docs.higgsfield.ai/docs.
-- Official registry regenerated from the model docs and cross-checked against the open.higgsfield.ai console: 85 endpoints (incl. console-only AI Influencer and Soul 2 image-to-image) with documented params and constraints; docs/console disagreements are flagged in each model's constraints. Endpoints no longer documented (Reve, Seedream v4, FLUX.1 Kontext, DOP, Seedance v1, Kling v2.1) were removed.
-- Submissions send the documented `Idempotency-Key` header; uploads forward the presign `upload_headers`.
-- `create_character` sends the documented `input_images` body and accepts `model_version` (`v1` / `v2` / `cinema`).
-- Official HTTP 403 with a credits message maps to `InsufficientCreditsError`; HTTP 400 concurrency-limit responses map to `RateLimitError`.
-- Official submits retry HTTP 500 (safe under `Idempotency-Key`); `subscribe` backs off 2s → 10s.
-- `upload_image` defaults to the official backend and accepts the documented image, WAV and MP4 types.
+First public release.
 
 ### Added
 
-- `extra_params` on `generate_image` / `generate_video` / `generate_batch` for model-specific fields; `prompt` is optional (some models take none).
-- `webhook_url` on generation tools, sent as `hf_webhook`.
-- Status results include `audio_urls` and `artifacts` (zip/mov/jsx/fbx/ply).
-- `estimate_cost` tool (`POST /estimate/{model}`).
-- `list_model_presets` tool for Genjutsu Restyle presets, Marketing Studio Image presets and AI Influencer options.
-- Initial unified MCP server combining official `platform.higgsfield.ai` API and opt-in `cloud.higgsfield.ai` / `fnf.higgsfield.ai` web backend.
-- Model registry covering 27 image and video models (8 official, 4 web image, 15 web video).
-- MCP tools: `list_models`, `generate_image`, `generate_video`, `get_status`, `cancel_job`, `upload_image`, `subscribe`.
-- Three-tier auth for the web backend: explicit `HIGGSFIELD_JWT` override, long-lived `HIGGSFIELD_CLERK_CLIENT` cookie with Clerk-side refresh, or hard fail with an actionable error.
-- `curl_cffi` Chrome TLS impersonation for web-backend traffic to clear Datadome's TLS-fingerprint check.
-- `HIGGSFIELD_DATADOME_COOKIE` passthrough for sessions where the cookie has been pinned externally.
-- Startup stderr warning when the experimental web backend is enabled.
+- **Official backend.** Runs against `api.higgsfield.ai` with `Authorization: Key KEY_ID:SECRET`; keys come from `open.higgsfield.ai`.
+- **85 official models.**
+  - 83 are generated from the per-model pages on docs.higgsfield.ai (endpoint ID + complete JSON schema).
+  - AI Influencer and Soul 2 image-to-image come from the open.higgsfield.ai console.
+  - Each model lists its params, enums, ranges, defaults and required fields.
+  - Where the docs and the console disagree, the model's constraints say so.
+- **Generation tools.**
+  - `generate_image`, `generate_video` and `generate_batch` take `extra_params` for model-specific fields and an optional `prompt`.
+  - They also take `webhook_url`, sent as `hf_webhook`.
+  - On official Kling models, `sound` is mapped to `on` / `off`.
+- **Results.**
+  - `get_status` and `subscribe` return images, video, `audio_urls` and `artifacts` (zip / mov / jsx / fbx / ply).
+  - `subscribe` backs off from 2s to 10s between polls.
+- **Discovery tools.**
+  - `list_models`, `recommend_model` and `validate_params` work locally.
+  - `estimate_cost` calls `POST /estimate/{model}`.
+  - `preflight_check` checks configuration.
+  - `list_model_presets` returns Genjutsu Restyle styles, Marketing Studio Image presets and AI Influencer options.
+- **Uploads.** `upload_image` uploads through a presigned URL (forwarding the returned `upload_headers`) and accepts the documented image, WAV and MP4 types.
+- **Soul ID characters.** `create_character` / `get_character` / `list_characters` / `delete_character` train and manage Soul ID characters with `model_version` (`v1` / `v2` / `cinema`).
+- **Best-effort helpers on undocumented `/v1` routes:** `get_balance`, `list_jobs`, `list_soul_styles`, `list_motions`, `generate_speech_video`.
+- **Reliability.**
+  - Every submit sends an `Idempotency-Key` and is retried on 429 / 5xx with backoff and jitter.
+  - A circuit breaker stops calls to a backend that keeps failing.
+  - Errors are typed: auth, out of credits, concurrency/rate limit, bot challenge, network, schema.
+- **MCP surface.**
+  - Every tool has a typed output schema.
+  - Resources: `higgsfield://models` and `higgsfield://models/{kind}`.
+  - Prompt templates: `cinematic_shot`, `product_360`, `animate_portrait`, `action_sequence`, `b_roll`.
+- **Experimental web backend (opt-in).**
+  - Reaches 34 consumer-app models (Sora 2, Veo 3, Nano Banana, …).
+  - Authenticates with an explicit `HIGGSFIELD_JWT`, or a `HIGGSFIELD_CLERK_CLIENT` cookie with Clerk-side refresh.
+  - Uses `curl_cffi` TLS impersonation and an optional `HIGGSFIELD_DATADOME_COOKIE` passthrough.
+  - Prints a startup warning when enabled.
 
-### Verified
+### Known limitations
 
-- `higgsfield-ai/soul/standard` end-to-end against `platform.higgsfield.ai` (submit + poll + image URL returned).
+- **Untested against the live API.** The official endpoints are verified against the docs and the console, but no paid generation was run before release.
+- **Web backend.**
+  - `fnf.higgsfield.ai` is the consumer app's private backend, not a public API, and is probably outside Higgsfield's terms of use.
+    Cloudflare and Datadome rate-limit and IP-block programmatic clients; TLS impersonation clears the basic check but does not survive sustained traffic.
+  - The Clerk session JWT lives about a minute, and the `__client` cookie that mints it rotates roughly weekly.
+    Tokens minted on `cloud.higgsfield.ai` (`azp=cloud.higgsfield.ai`) are rejected; use the consumer-app login at `higgsfield.ai`.
+  - Some web slugs are stale relative to the live app, and 16 web models are marked `inferred` (hidden by default).
 
-### Known limitations (web backend only)
-
-- The `fnf.higgsfield.ai` host is the consumer web app's private backend, not a public API.
-  Cloudflare and Datadome aggressively rate-limit and IP-block programmatic clients after a small number of requests.
-  TLS impersonation clears the basic check but does not survive sustained traffic.
-- The Clerk session JWT lives roughly one minute.
-  The `__client` cookie that mints fresh JWTs rotates roughly every seven days; users must re-paste it when that happens.
-- JWT audience matters: tokens minted on `cloud.higgsfield.ai` (the developer dashboard) are scoped `azp=cloud.higgsfield.ai` and are rejected by `fnf.higgsfield.ai`.
-  The consumer-app login at `higgsfield.ai` is what produces the right `azp=higgsfield.ai` token.
-- Several upstream slugs in the registry (`seedance2`, `kling3`, `kling-o3-flf`, `nano-banana-1`) are stale relative to the live consumer app, which uses underscored model slugs (`seedance_2_0`, `kling3_0`, `kling-omni-flf`, `imagegen_2_0`, `veo-3-1-preview`, `wan2_7`, `open_sora_video`).
-  These will be reconciled in a future release after a clean live capture.
-- The web backend is almost certainly outside Higgsfield's published terms of use.
-  Driving it from an MCP server is at the user's own risk.
+[Unreleased]: https://github.com/Hikhakk/higgsfield-mcp-unified/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/Hikhakk/higgsfield-mcp-unified/releases/tag/v0.1.0

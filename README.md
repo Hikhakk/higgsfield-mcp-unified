@@ -5,7 +5,7 @@ It puts **85 models from the official Higgsfield API**: Seedance 2.5, Kling 3.0 
 Soul character training, webhooks, cost estimates and preset catalogs sit behind the same typed tool surface, which any MCP client (Claude Desktop, Claude Code, Cursor, …) can use.
 An opt-in experimental backend adds 34 consumer-app models such as Sora 2, Veo 3 and Nano Banana.
 
-> **Status: alpha.** Install from source; this isn't on PyPI yet.
+> **Status: alpha.**
 > The official-API path follows [docs.higgsfield.ai](https://docs.higgsfield.ai/docs) and has been cross-checked against the [open.higgsfield.ai](https://open.higgsfield.ai/explore) console.
 
 ## Why this over the hosted MCP
@@ -23,13 +23,27 @@ This one runs **on your machine** with your API key, and adds:
 
 ## Install
 
-Clone and run with [uv](https://docs.astral.sh/uv/):
+The package is [`higgsfield-mcp-unified`](https://pypi.org/project/higgsfield-mcp-unified/) on PyPI, and its command is `higgsfield-mcp`.
+With [uv](https://docs.astral.sh/uv/) there's nothing to install up front:
+
+```bash
+uvx --from higgsfield-mcp-unified higgsfield-mcp     # starts the stdio MCP server
+```
+
+Or install it with pip:
+
+```bash
+pip install higgsfield-mcp-unified
+higgsfield-mcp
+```
+
+To run from source instead:
 
 ```bash
 git clone https://github.com/Hikhakk/higgsfield-mcp-unified
 cd higgsfield-mcp-unified
 uv sync
-uv run higgsfield-mcp        # starts the stdio MCP server
+uv run higgsfield-mcp
 ```
 
 ## Configure
@@ -49,8 +63,8 @@ export HIGGSFIELD_SECRET=...         # key secret
 {
   "mcpServers": {
     "higgsfield": {
-      "command": "uv",
-      "args": ["run", "--directory", "/path/to/higgsfield-mcp-unified", "higgsfield-mcp"],
+      "command": "uvx",
+      "args": ["--from", "higgsfield-mcp-unified", "higgsfield-mcp"],
       "env": {
         "HIGGSFIELD_API_KEY": "...",
         "HIGGSFIELD_SECRET": "..."
@@ -65,10 +79,11 @@ export HIGGSFIELD_SECRET=...         # key secret
 ```bash
 claude mcp add higgsfield \
   -e HIGGSFIELD_API_KEY=... -e HIGGSFIELD_SECRET=... \
-  -- uv run --directory /path/to/higgsfield-mcp-unified higgsfield-mcp
+  -- uvx --from higgsfield-mcp-unified higgsfield-mcp
 ```
 
 Cursor and other stdio clients use the same command; see [`examples/`](examples/).
+If you run from source, use `uv run --directory /path/to/higgsfield-mcp-unified higgsfield-mcp` as the command.
 
 ### First run
 
