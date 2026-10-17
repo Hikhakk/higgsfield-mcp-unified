@@ -5,8 +5,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed
+
+- Official backend moved to `api.higgsfield.ai` (dashboard / keys now at `open.higgsfield.ai`), per https://docs.higgsfield.ai/docs.
+- Official registry regenerated from the model docs and cross-checked against the open.higgsfield.ai console: 85 endpoints (incl. console-only AI Influencer and Soul 2 image-to-image) with documented params and constraints; docs/console disagreements are flagged in each model's constraints. Endpoints no longer documented (Reve, Seedream v4, FLUX.1 Kontext, DOP, Seedance v1, Kling v2.1) were removed.
+- Submissions send the documented `Idempotency-Key` header; uploads forward the presign `upload_headers`.
+- `create_character` sends the documented `input_images` body and accepts `model_version` (`v1` / `v2` / `cinema`).
+- Official HTTP 403 with a credits message maps to `InsufficientCreditsError`; HTTP 400 concurrency-limit responses map to `RateLimitError`.
+- Official submits retry HTTP 500 (safe under `Idempotency-Key`); `subscribe` backs off 2s → 10s.
+- `upload_image` defaults to the official backend and accepts the documented image, WAV and MP4 types.
+
 ### Added
 
+- `extra_params` on `generate_image` / `generate_video` / `generate_batch` for model-specific fields; `prompt` is optional (some models take none).
+- `webhook_url` on generation tools, sent as `hf_webhook`.
+- Status results include `audio_urls` and `artifacts` (zip/mov/jsx/fbx/ply).
+- `estimate_cost` tool (`POST /estimate/{model}`).
+- `list_model_presets` tool for Genjutsu Restyle presets, Marketing Studio Image presets and AI Influencer options.
 - Initial unified MCP server combining official `platform.higgsfield.ai` API and opt-in `cloud.higgsfield.ai` / `fnf.higgsfield.ai` web backend.
 - Model registry covering 27 image and video models (8 official, 4 web image, 15 web video).
 - MCP tools: `list_models`, `generate_image`, `generate_video`, `get_status`, `cancel_job`, `upload_image`, `subscribe`.

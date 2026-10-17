@@ -1,6 +1,6 @@
-"""Official backend driver: ``platform.higgsfield.ai``.
+"""Official backend driver: ``api.higgsfield.ai``.
 
-API shape (https://docs.higgsfield.ai/how-to/introduction.md):
+API shape (https://docs.higgsfield.ai/docs/how-to/introduction.md):
 
 * ``POST /{model_id}`` -> ``{ request_id, status_url, cancel_url, ... }``
 * ``GET  /requests/{request_id}/status`` -> status payload
@@ -19,11 +19,23 @@ from higgsfield_mcp.auth.api_key import ApiKeyAuth, load_from_env
 from higgsfield_mcp.errors import NetworkError, SchemaError, classify_http
 from higgsfield_mcp.models import Backend as BackendName
 from higgsfield_mcp.models import ModelSpec
-from higgsfield_mcp.reliability import CircuitBreaker, new_idempotency_key, retrying_request
+from higgsfield_mcp.reliability import (
+    RETRYABLE_STATUS,
+    CircuitBreaker,
+    new_idempotency_key,
+    retrying_request,
+)
 
 from .base import BackendDriver, BackendError, JobHandle, JobState, JobStatus
 
-BASE_URL = "https://platform.higgsfield.ai"
+BASE_URL = "https://api.higgsfield.ai"
+
+# Extra files some video/3D operations return next to ``video`` (docs: concepts/requests).
+ARTIFACT_KEYS: tuple[str, ...] = ("zip", "mov", "jsx", "fbx", "ply")
+
+# A 500 on submit is safe to retry: the Idempotency-Key makes the replay return the
+# original request instead of creating a second generation (docs: concepts/errors).
+_SUBMIT_RETRY_STATUS = RETRYABLE_STATUS | {500}
 
 _STATE_MAP: dict[str, JobState] = {
     "queued": "queued",
@@ -60,22 +72,31 @@ class OfficialBackend(BackendDriver):
     async def aclose(self) -> None:
         await self._client.aclose()
 
-    async def submit(self, model: ModelSpec, params: dict[str, Any]) -> JobHandle:
+    async def submit(
+        self, model: ModelSpec, params: dict[str, Any], *, webhook_url: str | None = None
+    ) -> JobHandle:
         if model.backend != "official":
             raise BackendError(f"OfficialBackend cannot submit web model {model.id!r}")
         self._breaker.check()
         idem = new_idempotency_key()
+        query = {"hf_webhook": webhook_url} if webhook_url else None
 
         async def _send() -> httpx.Response:
             try:
                 return await self._client.post(
-                    f"/{model.endpoint}", json=params, headers={"X-Idempotency-Key": idem}
+                    f"/{model.endpoint}",
+                    json=params,
+                    params=query,
+                    headers={"Idempotency-Key": idem},
                 )
             except httpx.HTTPError as exc:
                 raise NetworkError(str(exc)) from exc
 
         try:
-            resp = cast(httpx.Response, await retrying_request(_send))
+            resp = cast(
+                httpx.Response,
+                await retrying_request(_send, retry_status=_SUBMIT_RETRY_STATUS),
+            )
         except Exception:
             self._breaker.record_failure()
             raise
@@ -115,14 +136,72 @@ class OfficialBackend(BackendDriver):
         state = _STATE_MAP.get(raw_state, "in_progress")
         images = tuple(self._extract_image_urls(body))
         video_url = self._extract_video_url(body)
+        audio_urls = tuple(
+            dict.fromkeys(
+                [*self._media_urls(body.get("audio")), *self._media_urls(body.get("audios"))]
+            )
+        )
+        artifacts = {k: urls for k in ARTIFACT_KEYS if (urls := self._media_urls(body.get(k)))}
         return JobStatus(
             state=state,
             progress=body.get("progress"),
             images=images,
             video_url=video_url,
+            audio_urls=audio_urls,
+            artifacts=artifacts,
             error=body.get("error") or body.get("error_message"),
             raw=body,
         )
+
+    async def estimate(self, model: ModelSpec, params: dict[str, Any]) -> dict[str, Any]:
+        """Price a request without submitting it (docs: concepts/billing-and-retention)."""
+        if model.backend != "official":
+            raise BackendError(f"OfficialBackend cannot estimate web model {model.id!r}")
+        self._breaker.check()
+
+        async def _send() -> httpx.Response:
+            try:
+                return await self._client.post(f"/estimate/{model.endpoint}", json=params)
+            except httpx.HTTPError as exc:
+                raise NetworkError(str(exc)) from exc
+
+        try:
+            resp = cast(httpx.Response, await retrying_request(_send, max_attempts=3))
+        except Exception:
+            self._breaker.record_failure()
+            raise
+        if resp.status_code >= 500:
+            self._breaker.record_failure()
+        else:
+            self._breaker.record_success()
+        body = self._json_or_raise(resp)
+        credits, usd = body.get("credits"), body.get("usd")
+        return {
+            "credits": None if credits is None else str(credits),
+            "usd": None if usd is None else str(usd),
+            "raw": body,
+        }
+
+    async def get_json(self, path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Authenticated GET for catalog lookups (presets, options)."""
+        self._breaker.check()
+
+        async def _send() -> httpx.Response:
+            try:
+                return await self._client.get(path, params=params)
+            except httpx.HTTPError as exc:
+                raise NetworkError(str(exc)) from exc
+
+        try:
+            resp = cast(httpx.Response, await retrying_request(_send, max_attempts=3))
+        except Exception:
+            self._breaker.record_failure()
+            raise
+        if resp.status_code >= 500:
+            self._breaker.record_failure()
+        else:
+            self._breaker.record_success()
+        return self._json_or_raise(resp)
 
     async def cancel(self, handle: JobHandle) -> None:
         resp = await self._client.post(f"/requests/{handle.request_id}/cancel")
@@ -138,14 +217,18 @@ class OfficialBackend(BackendDriver):
         body = self._json_or_raise(resp)
         upload_url = body.get("upload_url")
         public_url = body.get("public_url") or body.get("url")
+        upload_headers = {str(k): str(v) for k, v in (body.get("upload_headers") or {}).items()}
         if not upload_url or not public_url:
             raise BackendError(
                 f"generate-upload-url response missing upload_url/public_url: {body!r}",
                 status_code=resp.status_code,
             )
-        # The signed PUT must NOT carry the platform Authorization header.
+        # The signed PUT must NOT carry the API Authorization header, but must carry
+        # every header the presign response lists (e.g. x-amz-tagging).
         async with httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=10.0)) as raw:
-            put = await raw.put(upload_url, content=data, headers={"Content-Type": mime})
+            put = await raw.put(
+                upload_url, content=data, headers={"Content-Type": mime, **upload_headers}
+            )
             if put.status_code >= 400:
                 raise BackendError(
                     f"Signed upload PUT failed: HTTP {put.status_code}",
@@ -196,7 +279,13 @@ class OfficialBackend(BackendDriver):
 
     @staticmethod
     def _character_view(raw: dict[str, Any]) -> dict[str, Any]:
-        images = raw.get("image_urls") or raw.get("images") or raw.get("medias") or []
+        images = (
+            raw.get("input_images")
+            or raw.get("image_urls")
+            or raw.get("images")
+            or raw.get("medias")
+            or []
+        )
         return {
             "id": raw.get("id") or raw.get("custom_reference_id") or raw.get("soul_id") or "",
             "name": raw.get("name") or raw.get("title") or "",
@@ -205,15 +294,21 @@ class OfficialBackend(BackendDriver):
             "raw": raw,
         }
 
-    async def create_character(self, name: str, image_urls: list[str]) -> dict[str, Any]:
-        body = self._v1_payload_create(name, image_urls)
+    async def create_character(
+        self, name: str, image_urls: list[str], model_version: str = "v1"
+    ) -> dict[str, Any]:
+        body = self._v1_payload_create(name, image_urls, model_version)
         raw = await self._v1_request("POST", "/v1/custom-references", json=body)
         return self._character_view(raw if isinstance(raw, dict) else {"raw": raw})
 
     @staticmethod
-    def _v1_payload_create(name: str, image_urls: list[str]) -> dict[str, Any]:
-        # Request shape is a best guess (CLI says 5-20 training images).
-        return {"name": name, "image_urls": list(image_urls)}
+    def _v1_payload_create(name: str, image_urls: list[str], model_version: str) -> dict[str, Any]:
+        # https://docs.higgsfield.ai/docs/models/soul-id/create-character
+        return {
+            "name": name,
+            "model_version": model_version,
+            "input_images": [{"type": "image_url", "image_url": u} for u in image_urls],
+        }
 
     async def get_character(self, character_id: str) -> dict[str, Any]:
         raw = await self._v1_request("GET", f"/v1/custom-references/{character_id}")
@@ -311,6 +406,18 @@ class OfficialBackend(BackendDriver):
                 url = entry.get("url") or entry.get("image_url")
                 if url:
                     out.append(url)
+        return out
+
+    @staticmethod
+    def _media_urls(value: Any) -> list[str]:
+        """Normalise a MediaOutput (``{"url": ...}``), bare URL, or list of either."""
+        items = value if isinstance(value, list) else [value]
+        out: list[str] = []
+        for item in items:
+            if isinstance(item, str) and item:
+                out.append(item)
+            elif isinstance(item, dict) and isinstance(item.get("url"), str):
+                out.append(item["url"])
         return out
 
     @staticmethod

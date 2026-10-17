@@ -41,6 +41,8 @@ class JobStatusResult(BaseModel):
     progress: float | None = None
     images: list[str] = []
     video_url: str | None = None
+    audio_urls: list[str] = []
+    artifacts: dict[str, list[str]] = {}
     error: str | None = None
     timeout: bool = False
 
@@ -111,6 +113,21 @@ class CharacterList(BaseModel):
 class CharacterDeleted(BaseModel):
     deleted: bool
     character_id: str
+
+
+class EstimateResult(BaseModel):
+    model_id: str
+    credits: str | None = None
+    usd: str | None = None
+    raw: dict[str, Any] = {}
+
+
+class PresetList(BaseModel):
+    model_id: str
+    items: list[dict[str, Any]]
+    total: int | None = None
+    next_cursor: int | None = None
+    raw: dict[str, Any] = {}
 
 
 class Balance(BaseModel):

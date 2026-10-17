@@ -4,6 +4,7 @@ from higgsfield_mcp.backends.base import BackendError
 from higgsfield_mcp.errors import (
     AuthError,
     BotChallengeError,
+    InsufficientCreditsError,
     RateLimitError,
     classify_http,
     parse_retry_after,
@@ -30,6 +31,12 @@ def test_classify_403_cloudflare_is_bot_challenge() -> None:
 def test_classify_403_plain_is_auth_error() -> None:
     err = classify_http(403, body="forbidden")
     assert isinstance(err, AuthError)
+
+
+def test_classify_403_credits_is_insufficient_credits() -> None:
+    err = classify_http(403, body='{"detail":"Not enough credits"}')
+    assert isinstance(err, InsufficientCreditsError)
+    assert "open.higgsfield.ai" in str(err)
 
 
 def test_classify_429_carries_retry_after() -> None:

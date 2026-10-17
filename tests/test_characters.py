@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import httpx
 import pytest
 import respx
@@ -33,10 +35,17 @@ async def test_create_character(pool) -> None:
         route = mock.post("/v1/custom-references").mock(
             return_value=httpx.Response(200, json={"id": "soul-1", "status": "queued"})
         )
-        out = await create_character(pool, name="Ada", image_urls=["https://x/1.png"])
+        out = await create_character(
+            pool, name="Ada", image_urls=["https://x/1.png"], model_version="v2"
+        )
     assert out["id"] == "soul-1"
     body = route.calls.last.request
     assert body.headers["hf-api-key"] == "kid"
+    assert json.loads(body.content) == {
+        "name": "Ada",
+        "model_version": "v2",
+        "input_images": [{"type": "image_url", "image_url": "https://x/1.png"}],
+    }
     await pool.aclose()
 
 

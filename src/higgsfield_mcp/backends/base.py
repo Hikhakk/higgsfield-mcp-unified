@@ -7,7 +7,7 @@ re-target the right backend on subsequent calls.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Literal, Protocol
 
 from higgsfield_mcp.models import Backend as BackendName
@@ -41,6 +41,9 @@ class JobStatus:
     progress: float | None = None
     images: tuple[str, ...] = ()
     video_url: str | None = None
+    audio_urls: tuple[str, ...] = ()
+    artifacts: dict[str, list[str]] = field(default_factory=dict)
+    """Extra files some video/3D operations return, keyed by type (zip, mov, jsx, fbx, ply)."""
     error: str | None = None
     raw: dict[str, Any] | None = None
 
@@ -50,7 +53,9 @@ class BackendDriver(Protocol):
 
     name: BackendName
 
-    async def submit(self, model: ModelSpec, params: dict[str, Any]) -> JobHandle: ...
+    async def submit(
+        self, model: ModelSpec, params: dict[str, Any], *, webhook_url: str | None = None
+    ) -> JobHandle: ...
     async def status(self, handle: JobHandle) -> JobStatus: ...
     async def cancel(self, handle: JobHandle) -> None: ...
     async def upload(self, data: bytes, mime: str) -> str: ...

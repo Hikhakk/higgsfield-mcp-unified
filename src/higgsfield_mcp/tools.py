@@ -56,10 +56,21 @@ def _spec_for(model_id: str, expected_kind: Kind | None = None) -> ModelSpec:
     return spec
 
 
-def _filter_params(spec: ModelSpec, params: dict[str, Any]) -> dict[str, Any]:
-    """Drop unknown params and warn via a synthetic key."""
-    accepted = {k: v for k, v in params.items() if k in spec.supports and v is not None}
-    return accepted
+def _check_webhook(spec: ModelSpec, webhook_url: str | None) -> None:
+    if webhook_url is None:
+        return
+    if spec.backend != "official":
+        raise ValueError(f"Webhooks are only supported on official models, not {spec.id!r}.")
+    if not webhook_url.startswith("https://"):
+        raise ValueError("webhook_url must be a public HTTPS URL.")
+
+
+def _filter_params(
+    spec: ModelSpec, params: dict[str, Any], extra_params: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """Merge model-specific extras over the named params, then drop unsupported/None keys."""
+    merged = {**params, **(extra_params or {})}
+    return {k: v for k, v in merged.items() if k in spec.supports and v is not None}
 
 
 # ---------------------------------------------------------------------------
@@ -83,7 +94,7 @@ async def list_models(
 async def generate_image(
     pool: BackendPool,
     model_id: str,
-    prompt: str,
+    prompt: str | None = None,
     aspect_ratio: str | None = None,
     resolution: str | None = None,
     quality: str | None = None,
@@ -94,9 +105,12 @@ async def generate_image(
     enhance_prompt: bool | None = None,
     soul_id: str | None = None,
     soul_strength: float | None = None,
+    extra_params: dict[str, Any] | None = None,
+    webhook_url: str | None = None,
 ) -> dict[str, Any]:
     """Submit an image-generation job. Returns a serialisable JobHandle string."""
     spec = _spec_for(model_id, expected_kind="image")
+    _check_webhook(spec, webhook_url)
     params = _filter_params(
         spec,
         {
@@ -112,25 +126,32 @@ async def generate_image(
             "custom_reference_id": soul_id,
             "custom_reference_strength": soul_strength,
         },
+        extra_params,
     )
     backend = pool.get(spec.backend)
-    handle = await backend.submit(spec, params)
+    handle = await backend.submit(spec, params, webhook_url=webhook_url)
     return {"job_handle": handle.serialise(), "model_id": model_id, "backend": spec.backend}
 
 
 async def generate_video(
     pool: BackendPool,
     model_id: str,
-    prompt: str,
+    prompt: str | None = None,
     image_url: str | None = None,
     end_image_url: str | None = None,
     duration: int | None = None,
     resolution: str | None = None,
     sound: bool | None = None,
     seed: int | None = None,
+    extra_params: dict[str, Any] | None = None,
+    webhook_url: str | None = None,
 ) -> dict[str, Any]:
     """Submit a video-generation job (text-to-video or image-to-video)."""
     spec = _spec_for(model_id, expected_kind="video")
+    _check_webhook(spec, webhook_url)
+    sound_value: bool | str | None = sound
+    if spec.backend == "official" and sound is not None:
+        sound_value = "on" if sound else "off"  # official Kling takes an on/off enum
     params = _filter_params(
         spec,
         {
@@ -139,13 +160,63 @@ async def generate_video(
             "end_image_url": end_image_url,
             "duration": duration,
             "resolution": resolution,
-            "sound": sound,
+            "sound": sound_value,
             "seed": seed,
         },
+        extra_params,
     )
     backend = pool.get(spec.backend)
-    handle = await backend.submit(spec, params)
+    handle = await backend.submit(spec, params, webhook_url=webhook_url)
     return {"job_handle": handle.serialise(), "model_id": model_id, "backend": spec.backend}
+
+
+async def estimate_cost(pool: BackendPool, model_id: str, params: dict[str, Any]) -> dict[str, Any]:
+    """Price a request with the same params a generate call would send (official models)."""
+    spec = REGISTRY.get(model_id)
+    if spec.backend != "official":
+        raise ValueError(
+            f"Cost estimates are only available for official models, not {model_id!r}."
+        )
+    backend = pool.get("official")
+    out = await backend.estimate(spec, _filter_params(spec, params))  # type: ignore[attr-defined]
+    return {"model_id": model_id, **out}
+
+
+# Catalog lookups that feed a model's params: preset_id (Genjutsu Restyle, Marketing
+# Studio Image) and selection keys (AI Influencer).
+_PRESET_PATHS: dict[str, str] = {
+    "higgsfield/genjutsu/restyle/v1.0": "/models/higgsfield/genjutsu/restyle/v1.0/presets",
+    "marketing-studio/image": "/marketing-studio/image/presets",
+    "marketing-studio/image/flare": "/marketing-studio/image/presets",
+    "marketing-studio/image/sunburst": "/marketing-studio/image/presets",
+    "higgsfield/ai-influencer": "/models/higgsfield/ai-influencer/options",
+}
+
+
+async def list_model_presets(
+    pool: BackendPool,
+    model_id: str,
+    search: str | None = None,
+    size: int | None = None,
+    cursor: int | None = None,
+) -> dict[str, Any]:
+    """List presets/options for a model. ``search``/``size``/``cursor`` apply to Marketing Studio."""
+    path = _PRESET_PATHS.get(model_id)
+    if path is None:
+        raise ValueError(f"No preset catalog for {model_id!r}; supported: {sorted(_PRESET_PATHS)}.")
+    query = {
+        k: v for k, v in {"search": search, "size": size, "cursor": cursor}.items() if v is not None
+    }
+    backend = pool.get("official")
+    raw = await backend.get_json(path, query or None)  # type: ignore[attr-defined]
+    items = raw.get("items") if "items" in raw else raw.get("categories", [])
+    return {
+        "model_id": model_id,
+        "items": [i for i in items or [] if isinstance(i, dict)],
+        "total": raw.get("total"),
+        "next_cursor": raw.get("cursor"),
+        "raw": raw,
+    }
 
 
 async def get_status(pool: BackendPool, job_handle: str) -> dict[str, Any]:
@@ -163,14 +234,33 @@ async def cancel_job(pool: BackendPool, job_handle: str) -> dict[str, Any]:
     return {"cancelled": True, "job_handle": job_handle}
 
 
+# Content types the official presigned upload accepts (docs: concepts/file-uploads).
+OFFICIAL_UPLOAD_TYPES: frozenset[str] = frozenset(
+    {
+        "image/jpeg",
+        "image/jpg",
+        "image/png",
+        "image/webp",
+        "image/gif",
+        "audio/wav",
+        "audio/x-wav",
+        "video/mp4",
+    }
+)
+
+
 async def upload_image(
     pool: BackendPool,
     path: str | None = None,
     data_base64: str | None = None,
     mime: str = "image/png",
-    backend: Backend = "web",
+    backend: Backend = "official",
 ) -> dict[str, Any]:
     """Upload a local file (path) or base64-encoded bytes to Higgsfield storage."""
+    if backend == "official" and mime not in OFFICIAL_UPLOAD_TYPES:
+        raise ValueError(
+            f"Unsupported content type {mime!r}; use one of {sorted(OFFICIAL_UPLOAD_TYPES)}."
+        )
     if path and data_base64:
         raise ValueError("Pass either path or data_base64, not both.")
     if path:
@@ -189,18 +279,25 @@ async def subscribe(
     job_handle: str,
     poll_interval: float = 2.0,
     timeout_seconds: float = 600.0,
+    max_poll_interval: float = 10.0,
 ) -> dict[str, Any]:
-    """Block until the job reaches a terminal state. Convenience over get_status."""
+    """Block until the job reaches a terminal state. Convenience over get_status.
+
+    The interval starts at ``poll_interval`` and backs off 1.5x per poll up to
+    ``max_poll_interval`` (docs: concepts/polling).
+    """
     handle = JobHandle.parse(job_handle)
     backend = pool.get(handle.backend)
     deadline = asyncio.get_running_loop().time() + timeout_seconds
+    delay = poll_interval
     while True:
         status = await backend.status(handle)
         if status.state in ("completed", "failed", "nsfw", "cancelled"):
             return _status_dict(handle, status)
         if asyncio.get_running_loop().time() >= deadline:
             return _status_dict(handle, status) | {"timeout": True}
-        await asyncio.sleep(poll_interval)
+        await asyncio.sleep(delay)
+        delay = min(delay * 1.5, max(poll_interval, max_poll_interval))
 
 
 def _status_dict(handle: JobHandle, status: JobStatus) -> dict[str, Any]:
@@ -210,6 +307,8 @@ def _status_dict(handle: JobHandle, status: JobStatus) -> dict[str, Any]:
         "progress": status.progress,
         "images": list(status.images),
         "video_url": status.video_url,
+        "audio_urls": list(status.audio_urls),
+        "artifacts": status.artifacts,
         "error": status.error,
     }
 
@@ -294,10 +393,12 @@ async def validate_params(model_id: str, params: dict[str, Any]) -> dict[str, An
     }
 
 
-async def create_character(pool: BackendPool, name: str, image_urls: list[str]) -> dict[str, Any]:
+async def create_character(
+    pool: BackendPool, name: str, image_urls: list[str], model_version: str = "v1"
+) -> dict[str, Any]:
     """Train a reusable Soul character from reference image URLs (official backend)."""
     backend = pool.get("official")
-    return await backend.create_character(name, image_urls)  # type: ignore[attr-defined,no-any-return]
+    return await backend.create_character(name, image_urls, model_version)  # type: ignore[attr-defined,no-any-return]
 
 
 async def get_character(pool: BackendPool, character_id: str) -> dict[str, Any]:
@@ -357,7 +458,8 @@ async def generate_speech_video(
 async def generate_batch(pool: BackendPool, requests: list[dict[str, Any]]) -> dict[str, Any]:
     """Submit multiple generations concurrently.
 
-    Each request is a dict: ``{"kind": "image"|"video", "model_id", "prompt", ...params}``.
+    Each request is a dict: ``{"kind": "image"|"video", "model_id", "prompt", ...params}``;
+    model-specific fields go in ``extra_params``.
     Returns a per-item result with ``ok`` and either ``job_handle`` or ``error`` (one bad
     item never fails the others).
     """
@@ -365,12 +467,8 @@ async def generate_batch(pool: BackendPool, requests: list[dict[str, Any]]) -> d
     async def _one(req: dict[str, Any]) -> dict[str, Any]:
         model_id = req.get("model_id")
         prompt = req.get("prompt")
-        if not model_id or not prompt:
-            return {
-                "ok": False,
-                "model_id": model_id or "",
-                "error": "each request needs 'model_id' and 'prompt'",
-            }
+        if not model_id:
+            return {"ok": False, "model_id": "", "error": "each request needs 'model_id'"}
         try:
             if req.get("kind") == "video":
                 res = await generate_video(
@@ -383,6 +481,8 @@ async def generate_batch(pool: BackendPool, requests: list[dict[str, Any]]) -> d
                     resolution=req.get("resolution"),
                     sound=req.get("sound"),
                     seed=req.get("seed"),
+                    extra_params=req.get("extra_params"),
+                    webhook_url=req.get("webhook_url"),
                 )
             else:
                 res = await generate_image(
@@ -399,6 +499,8 @@ async def generate_batch(pool: BackendPool, requests: list[dict[str, Any]]) -> d
                     enhance_prompt=req.get("enhance_prompt"),
                     soul_id=req.get("soul_id"),
                     soul_strength=req.get("soul_strength"),
+                    extra_params=req.get("extra_params"),
+                    webhook_url=req.get("webhook_url"),
                 )
             return {
                 "ok": True,

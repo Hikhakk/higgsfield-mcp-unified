@@ -1,7 +1,7 @@
 [project]
 name = "higgsfield-mcp-unified"
 version = "0.1.0"
-description = "Unified MCP server for Higgsfield AI: official platform.higgsfield.ai API + opt-in cloud.higgsfield.ai web backend, exposing 27 image and video models."
+description = "Unified MCP server for Higgsfield AI: official api.higgsfield.ai API + opt-in cloud.higgsfield.ai web backend, exposing 119 image and video models."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }

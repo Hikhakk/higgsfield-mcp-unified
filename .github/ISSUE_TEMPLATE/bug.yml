@@ -7,7 +7,7 @@ body:
     attributes:
       label: Backend
       options:
-        - official (platform.higgsfield.ai)
+        - official (api.higgsfield.ai)
         - web (cloud.higgsfield.ai)
         - both / unsure
         - server / tooling

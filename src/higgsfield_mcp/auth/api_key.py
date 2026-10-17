@@ -31,6 +31,6 @@ def load_from_env() -> ApiKeyAuth:
     if not key or not secret:
         raise MissingCredentialsError(
             "HIGGSFIELD_API_KEY and HIGGSFIELD_SECRET must be set to use the official backend. "
-            "Get credentials from https://platform.higgsfield.ai/."
+            "Get credentials from https://open.higgsfield.ai/."
         )
     return ApiKeyAuth(api_key=key, secret=secret)

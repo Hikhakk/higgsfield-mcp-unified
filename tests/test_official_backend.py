@@ -152,7 +152,7 @@ async def test_429_retries_with_constant_idempotency_key(auth: ApiKeyAuth) -> No
         assert handle.request_id == "ok-1"
         assert route.call_count == 2
         # the idempotency key is generated once and reused across retries
-        keys = {c.request.headers["x-idempotency-key"] for c in route.calls}
+        keys = {c.request.headers["idempotency-key"] for c in route.calls}
         assert len(keys) == 1
     finally:
         await backend.aclose()
@@ -188,6 +188,10 @@ async def test_upload_two_step(auth: ApiKeyAuth) -> None:
                     json={
                         "upload_url": "https://s3.example/put?sig=1",
                         "public_url": "https://cdn.higgsfield/abc.png",
+                        "upload_headers": {
+                            "Content-Type": "image/png",
+                            "x-amz-tagging": "retention=temporary",
+                        },
                     },
                 )
             )
@@ -195,6 +199,7 @@ async def test_upload_two_step(auth: ApiKeyAuth) -> None:
             url = await backend.upload(b"\x89PNG...", "image/png")
         assert url == "https://cdn.higgsfield/abc.png"
         assert put.calls.last.request.headers["Content-Type"] == "image/png"
+        assert put.calls.last.request.headers["x-amz-tagging"] == "retention=temporary"
         assert "Authorization" not in put.calls.last.request.headers
     finally:
         await backend.aclose()

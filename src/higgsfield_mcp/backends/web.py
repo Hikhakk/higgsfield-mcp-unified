@@ -162,9 +162,13 @@ class WebBackend(BackendDriver):
     def _cookies(self) -> dict[str, str] | None:
         return {"datadome": self._datadome} if self._datadome else None
 
-    async def submit(self, model: ModelSpec, params: dict[str, Any]) -> JobHandle:
+    async def submit(
+        self, model: ModelSpec, params: dict[str, Any], *, webhook_url: str | None = None
+    ) -> JobHandle:
         if model.backend != "web":
             raise BackendError(f"WebBackend cannot submit official model {model.id!r}")
+        if webhook_url:
+            raise BackendError("Webhooks are only supported on the official backend")
         session = await self._ensure_session()
         headers = {**_BROWSER_HEADERS, **(await self._auth_header())}
         body = _build_body(model, params)
